@@ -13,11 +13,21 @@ It relies on mDNS for automatic peer discovery and transfers data over raw TCP. 
 - **Collision Protection:** Files are never overwritten; suffixes (e.g., `(1)`) are automatically appended to duplicate names.
 - **Cross-Platform:** Native binaries for Windows, macOS, and Linux.
 
+<p align="center">
+  <img src="assets/3.png" width="47.5%" alt="Screenshot 3">
+  <img src="assets/1.png" width="47.5%" alt="Screenshot 1">
+</p>
+
+<p align="center">
+  <img src="assets/2.png" width="60%" alt="Screenshot 2">
+</p>
+
+
 ## Installation
 
 Go 1.22 or newer is required to build from source.
 
-### Option 1: Install via Go (Recommended)
+### Option 1: Install via
 
 This compiles the binary and places it in your Go environment's `bin` directory.
 
@@ -97,4 +107,4 @@ See `pkg/protocol/` for implementation details.
 
 ## License
 
-This project is licensed under the MIT License.
+MIT
