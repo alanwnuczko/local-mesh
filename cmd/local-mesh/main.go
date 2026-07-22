@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/alanwnuczko/local-mesh/internal/app"
@@ -26,10 +28,15 @@ func main() {
 		defer logFile.Close()
 	}
 
+	// On Windows, try to open the firewall for mDNS.
+	// Requires Administrator; errors are logged only (best-effort).
+	if runtime.GOOS == "windows" {
+		ensureWindowsFirewallRule()
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Load or generate the stable per-device ID.
 	deviceID, err := discovery.LoadOrCreateDeviceID()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "device ID: %v\n", err)
@@ -41,8 +48,6 @@ func main() {
 		hostname = "unknown"
 	}
 
-	// Channels for inbound transfers (server → bus → Update).
-	// These are long-lived; one set for the whole server lifetime.
 	offerCh := make(chan transfer.OfferWithReply, 4)
 	recvProgress := make(chan transfer.ProgressEvent, 64)
 	recvDone := make(chan transfer.DoneEvent, 4)
@@ -55,7 +60,6 @@ func main() {
 	port := server.Port()
 	slog.Info("transfer server listening", "port", port)
 
-	// Register this instance via mDNS and start browsing for peers.
 	svc, err := discovery.New(deviceID, hostname, port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "discovery: %v\n", err)
@@ -64,31 +68,25 @@ func main() {
 	defer svc.Shutdown()
 	svc.Browse(ctx)
 
-	// Build the initial model.
 	model := app.NewModel(deviceID, hostname, 80, 24)
 
-	// sendRegCh receives newly created send-channel pairs when the user
-	// confirms a transfer. The bus goroutine below registers forwarders for them.
 	sendRegCh := make(chan sendChanPair, 8)
 	model.OnStartSend = func(progress chan transfer.ProgressEvent, done chan transfer.DoneEvent) {
 		sendRegCh <- sendChanPair{progress: progress, done: done}
 	}
 
-	// Create the Bubbletea program.
-	p := tea.NewProgram(model,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
+	// tea.WithAltScreen() causes a blank screen on Windows until the user
+	// presses a key (the alt-screen buffer waits for a terminal resize event
+	// that never arrives on CMD/PowerShell). We omit it so the TUI renders
+	// inline immediately on all platforms.
+	p := tea.NewProgram(model)
 
-	// Wire the bus. Bus forwarder goroutines call p.Send(msg) — the only safe
-	// way for background goroutines to communicate with the Bubbletea Update loop.
 	b := bus.New(p)
 	b.ForwardDiscovery(svc.Events())
 	b.ForwardOffers(offerCh)
 	b.ForwardRecvProgress(recvProgress)
 	b.ForwardRecvDone(recvDone)
 
-	// Watch for newly created send channel pairs and register bus forwarders.
 	go func() {
 		for pair := range sendRegCh {
 			b.ForwardSendProgress(pair.progress)
@@ -96,13 +94,64 @@ func main() {
 		}
 	}()
 
-	// Start the TCP Accept loop (goroutine #3).
-	server.Serve(ctx)
+	// Serve is a blocking Accept loop (spec §3.1 goroutine #3). It must run
+	// in its own goroutine so the Bubbletea event loop can start. Without the
+	// go keyword, p.Run() is never reached until the context is cancelled
+	// (Ctrl+C), which is why the TUI stayed blank until interrupt — and by
+	// then discovery's browse context was already cancelled too.
+	go server.Serve(ctx)
 
-	// Run the Bubbletea event loop (blocks until the user quits).
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "bubbletea: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func ensureWindowsFirewallRule() {
+	// mDNS (UDP 5353) must be allowed inbound on every profile. VMware Host-Only
+	// adapters are often classified as Public, so profile=any is required.
+	// Also allow the process itself for the TCP transfer port (OS-assigned).
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = os.Args[0]
+	}
+
+	rules := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "local-mesh mDNS",
+			args: []string{
+				"advfirewall", "firewall", "add", "rule",
+				"name=local-mesh mDNS",
+				"protocol=UDP", "dir=in", "localport=5353",
+				"action=allow", "profile=any",
+			},
+		},
+		{
+			name: "local-mesh TCP",
+			args: []string{
+				"advfirewall", "firewall", "add", "rule",
+				"name=local-mesh TCP",
+				"protocol=TCP", "dir=in",
+				"action=allow", "profile=any",
+				"program=" + exePath,
+			},
+		},
+	}
+	for _, r := range rules {
+		check := exec.Command("netsh", "advfirewall", "firewall", "show", "rule", "name="+r.name)
+		if err := check.Run(); err == nil {
+			continue // rule already exists
+		}
+		add := exec.Command("netsh", r.args...)
+		if out, err := add.CombinedOutput(); err != nil {
+			slog.Warn("firewall rule not added (run as Administrator to fix)",
+				"rule", r.name, "err", err, "out", string(out))
+		} else {
+			slog.Info("windows firewall: added rule", "rule", r.name)
+		}
 	}
 }
 

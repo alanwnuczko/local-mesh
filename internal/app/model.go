@@ -50,7 +50,7 @@ type Model struct {
 	SelectedPath string
 	SelectedIsDir bool
 
-	// Transfer channels — created per-transfer and forwarded through the bus.
+	// Transfer channels - created per-transfer and forwarded through the bus.
 	SendProgress chan transfer.ProgressEvent
 	SendDone     chan transfer.DoneEvent
 	RecvProgress chan transfer.ProgressEvent
@@ -85,6 +85,9 @@ func NewModel(selfID, selfHost string, width, height int) Model {
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
+		// tea.ClearScreen forces an immediate repaint. Without this, on Windows
+		// the alt-screen buffer stays blank until the first keypress or event.
+		tea.ClearScreen,
 		m.PeerList.Init(),
 		m.Picker.Init(),
 	)

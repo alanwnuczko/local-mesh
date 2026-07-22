@@ -9,7 +9,7 @@ import (
 
 // ProgressEvent is emitted by sender/receiver goroutines to report progress.
 // Background goroutines MUST NOT touch model fields; they emit these events on
-// channels which the bus forwards via program.Send — honouring the concurrency
+// channels which the bus forwards via program.Send - honouring the concurrency
 // invariant from §0 and §3.5.
 type ProgressEvent struct {
 	TransferID  string

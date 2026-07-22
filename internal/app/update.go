@@ -13,7 +13,7 @@ import (
 )
 
 // Update is the single entry point for all state transitions. It is called by
-// Bubbletea's event loop — always on the same goroutine — so Model fields may
+// Bubbletea's event loop - always on the same goroutine - so Model fields may
 // be mutated freely here and only here.
 //
 // CONCURRENCY INVARIANT (§0, §3.5): No background goroutine touches Model
@@ -65,7 +65,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case IncomingOfferMsg:
 		if m.ReceiveBusy {
-			// Already transferring — auto-reject with ERR_BUSY (§4.5, §6).
+			// Already transferring - auto-reject with ERR_BUSY (§4.5, §6).
 			return m, sendDecisionCmd(msg.Reply, protocol.DecisionMessage{
 				TransferID: msg.Offer.TransferID,
 				Accepted:   false,
@@ -208,7 +208,7 @@ func (m Model) startSend() (tea.Model, tea.Cmd) {
 	m.SendDone = sendDone
 
 	// Notify main.go to register these channels with the bus.
-	// OnStartSend only writes to a buffered channel — no Model fields touched.
+	// OnStartSend only writes to a buffered channel - no Model fields touched.
 	if m.OnStartSend != nil {
 		m.OnStartSend(sendProgress, sendDone)
 	}
@@ -292,7 +292,7 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // sendDecisionCmd returns a tea.Cmd that sends the decision on the reply
-// channel inside a goroutine — never touching Model fields.
+// channel inside a goroutine - never touching Model fields.
 func sendDecisionCmd(reply chan<- protocol.DecisionMessage, dec protocol.DecisionMessage) tea.Cmd {
 	return func() tea.Msg {
 		reply <- dec

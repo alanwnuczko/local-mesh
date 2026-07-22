@@ -1,23 +1,38 @@
-# Binaries
+# Built binaries (any platform)
+local-mesh
 local-mesh.exe
+*.exe
 dist/
 
-# Logs
+# Runtime / local logs
 *.log
+local-mesh.log
 
-# Go build cache
+# Go test / coverage artifacts
 *.test
 *.out
+*.cover
+coverage.html
+coverage.txt
+
+# Dependency / build noise (if ever generated locally)
+vendor/
 
 # OS artifacts
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# Editor directories
+# Editor / IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Other
+# Agent / internal planning docs (not product docs)
 CLAUDE.md
+Claude.md
+AGENTS.md
+.cursor/
+.codex/

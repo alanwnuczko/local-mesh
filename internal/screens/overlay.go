@@ -12,7 +12,7 @@ import (
 // OverlayState holds the state for the incoming-request overlay (§4.5).
 // It is stored at model.Overlay and rendered on top of the active screen.
 // Showing the overlay does NOT change activeScreen and does NOT touch the base
-// screen's model — it is purely additive state.
+// screen's model - it is purely additive state.
 type OverlayState struct {
 	Offer protocol.OfferMessage
 	// Reply is the channel the receive goroutine is blocked on (§3.3).

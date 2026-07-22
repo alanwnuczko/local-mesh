@@ -18,17 +18,66 @@ type Peer struct {
 }
 
 // Addr returns the primary "ip:port" string for dialing.
+//
+// On multi-homed hosts (e.g. Windows + VMware Host-Only + NAT + Wi-Fi) a peer
+// announces every interface IP. The first IPv4 is often unreachable from the
+// other side (Wi-Fi address seen over the Host-Only segment). Prefer an IPv4
+// that shares a subnet with one of our local interfaces so the TCP dial lands
+// on the shared link.
 func (p Peer) Addr() string {
 	if len(p.Addrs) == 0 {
 		return fmt.Sprintf("unknown:%d", p.Port)
 	}
-	// Prefer IPv4.
+
+	localNets := localIPv4Nets()
+	for _, ip := range p.Addrs {
+		ip4 := ip.To4()
+		if ip4 == nil {
+			continue
+		}
+		for _, n := range localNets {
+			if n.Contains(ip4) {
+				return fmt.Sprintf("%s:%d", ip4.String(), p.Port)
+			}
+		}
+	}
+
+	// Fallback: first IPv4, then first address.
 	for _, ip := range p.Addrs {
 		if ip4 := ip.To4(); ip4 != nil {
 			return fmt.Sprintf("%s:%d", ip4.String(), p.Port)
 		}
 	}
 	return fmt.Sprintf("[%s]:%d", p.Addrs[0].String(), p.Port)
+}
+
+// localIPv4Nets returns the IPv4 networks configured on this machine.
+// Used by Peer.Addr to prefer a peer IP on a shared subnet.
+func localIPv4Nets() []*net.IPNet {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var nets []*net.IPNet
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ip4 := ipnet.IP.To4(); ip4 != nil && !ip4.IsLinkLocalUnicast() {
+				nets = append(nets, &net.IPNet{IP: ip4.Mask(ipnet.Mask), Mask: ipnet.Mask})
+			}
+		}
+	}
+	return nets
 }
 
 // ShortID returns the first 8 characters of the device ID for display.

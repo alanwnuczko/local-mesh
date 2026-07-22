@@ -1,113 +1,100 @@
 # local-mesh
 
-Zero-config LAN file and folder transfer via a terminal TUI.  
-Discover peers automatically with mDNS/DNS-SD. Transfer files with SHA-256 integrity checking.
+local-mesh is a zero-configuration terminal UI for transferring files and folders across a local area network.
 
----
+It relies on mDNS for automatic peer discovery and transfers data over raw TCP. Data integrity is guaranteed via end-to-end SHA-256 verification before any file is committed to disk. The application operates entirely within your local network boundary-requiring no accounts, cloud services, or external routing.
 
 ## Features
 
-- **Automatic discovery** - peers appear within seconds via `_localmesh._tcp` mDNS
-- **Interactive TUI** - built with Bubbletea (peer list → file picker → confirmation → progress)
-- **Incoming-request overlay** - accept or reject offers interactively from any screen
-- **Integrity verification** - SHA-256 checked before any file is committed
-- **Folder transfers** - streamed as tar (no temp files on either end)
-- **Safe naming** - never overwrites; appends `(1)`, `(2)`, … on collision
-- **Cross-platform** - Windows, macOS, Linux
+- **Automatic Peer Discovery:** Instantly discover other instances on the LAN via mDNS (`_localmesh._tcp`).
+- **Terminal User Interface:** Fully interactive TUI built with [Bubbletea](https://github.com/charmbracelet/bubbletea).
+- **Folder Streaming:** Directories are streamed as tar archives and extracted on the fly, avoiding intermediate disk writes.
+- **Data Integrity:** SHA-256 hashes are computed and verified for all transfers.
+- **Collision Protection:** Files are never overwritten; suffixes (e.g., `(1)`) are automatically appended to duplicate names.
+- **Cross-Platform:** Native binaries for Windows, macOS, and Linux.
 
----
+## Installation
 
-## Build
+Go 1.22 or newer is required to build from source.
 
-Requires Go ≥ 1.22.
+### Option 1: Install via Go (Recommended)
 
-```sh
-go build -o local-mesh.exe ./cmd/local-mesh   # Windows
-go build -o local-mesh     ./cmd/local-mesh   # Linux/macOS
-```
-
-Or via Make:
+This compiles the binary and places it in your Go environment's `bin` directory.
 
 ```sh
-make build
+go install github.com/alanwnuczko/local-mesh/cmd/local-mesh@latest
 ```
 
----
+Ensure your Go `bin` directory is in your system's `PATH`:
+- **Windows:** `%USERPROFILE%\go\bin`
+- **macOS / Linux:** `$HOME/go/bin`
 
-## Run
+### Option 2: Build from Source
 
 ```sh
-./local-mesh.exe     # Windows
-./local-mesh         # Linux/macOS
+git clone https://github.com/alanwnuczko/local-mesh.git
+cd local-mesh
+go build -o local-mesh ./cmd/local-mesh
 ```
 
-Log output goes to `local-mesh.log` in the current directory.
-
----
+Move the resulting binary to a location in your `PATH` (e.g., `/usr/local/bin` on Unix systems).
 
 ## Usage
 
+Start the application by running the binary in your terminal:
+
+```sh
+local-mesh
+```
+
+### Keybindings
+
 | Key | Action |
 |-----|--------|
-| `↑`/`↓` or `j`/`k` | Move selection in peer list |
-| `enter` | Select peer / confirm file |
+| `↑` / `↓` (or `j` / `k`) | Navigate lists |
+| `Enter` | Select peer / Confirm transfer |
 | `r` | Refresh peer list |
-| `s` | Select current directory as folder transfer |
-| `esc` | Go back |
-| `y` / `a` | Accept incoming transfer |
-| `N` / `d` / `esc` | Reject incoming transfer |
+| `s` | Select current directory for folder transfer |
+| `Esc` | Return to previous screen |
+| `y` / `a` | Accept incoming transfer offer |
+| `N` / `d` / `Esc` | Reject incoming transfer offer |
 | `c` | Cancel active transfer |
-| `?` | Toggle help |
-| `q` / `ctrl+c` | Quit |
+| `?` | Toggle help menu |
+| `q` / `Ctrl+C` | Quit |
 
----
+### Default Directories
 
-## Manual verification (two terminals on the same machine)
+- **Received Files:** 
+  - Windows: `%USERPROFILE%\Downloads\local-mesh`
+  - macOS / Linux: `~/Downloads/local-mesh`
+- **Application Logs:** Written to `local-mesh.log` in the current working directory.
+- **Device ID Configuration:** 
+  - Windows: `%APPDATA%\local-mesh`
+  - macOS: `~/Library/Application Support/local-mesh`
+  - Linux: `~/.config/local-mesh`
 
-```sh
-# Terminal 1
-./local-mesh.exe
+## Network Requirements
 
-# Terminal 2
-./local-mesh.exe
+local-mesh requires a shared Layer 2 network segment (subnet) for mDNS multicast packets to reach peers.
+
+### Windows Environments
+- **Firewall:** You may need to run the application as Administrator on the first launch to automatically configure the Windows Firewall to allow inbound UDP traffic on port 5353.
+- **Virtual Machines:** If running a VM (VMware, VirtualBox), the network adapter must be set to **Bridged** mode, or a dedicated **Host-Only** adapter must be added. Standard NAT adapters block multicast discovery.
+
+## Protocol Architecture
+
+local-mesh utilizes a custom length-prefixed binary protocol over TCP:
+
+```text
+[FrameType: 1 byte] [Length: uint32 BE] [Payload: Length bytes]
 ```
 
-Both instances should discover each other within ~5 seconds.  
-Select the peer in one terminal → pick a file → confirm → the other terminal shows an overlay.
+- **Control Frames:** JSON encoded (`Offer`, `Decision`, `Complete`, `Ack`, `Error`).
+- **Data Frames:** Raw file bytes streamed in chunks (default 64 KiB).
+- **Folder Transfers:** Pre-processed to calculate the total size and SHA-256 hash before streaming via tar.
 
-> **Note:** mDNS on loopback is restricted on some OSes. For reliable testing use two real machines on the same LAN, or two Docker containers on a user-defined bridge network.
-
----
-
-## Docker two-container test
-
-```sh
-docker network create local-mesh-net
-
-docker run --rm -it --network local-mesh-net \
-  -v /path/to/file:/data/file \
-  --name lm-a \
-  local-mesh
-
-docker run --rm -it --network local-mesh-net \
-  --name lm-b \
-  local-mesh
-```
-
----
-
-## Wire protocol
-
-Custom length-prefixed binary framing over TCP:
-
-```
-[FrameType: 1 byte] [Length: 4 bytes uint32 BE] [Payload: Length bytes]
-```
-
-Control frames carry JSON; data frames carry raw file bytes. SHA-256 is computed end-to-end over the entire payload. See `pkg/protocol/` for the full spec.
-
----
+See `pkg/protocol/` for implementation details.
 
 ## License
 
-MIT
+This project is licensed under the MIT License.

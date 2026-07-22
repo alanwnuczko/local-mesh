@@ -163,7 +163,7 @@ func RunReceive(cfg RecvConfig) {
 		}
 	}()
 
-	// Phase 4: consume the pipe — either write to file or untar.
+	// Phase 4: consume the pipe - either write to file or untar.
 	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseVerifying, BytesTotal: offer.Size}
 
 	downloadsDir, err := config.DownloadsDir()

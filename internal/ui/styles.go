@@ -5,7 +5,7 @@ package ui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Colour palette — curated dark-mode colours.
+// Colour palette - curated dark-mode colours.
 var (
 	ColorPrimary    = lipgloss.Color("#7C3AED") // violet-600
 	ColorAccent     = lipgloss.Color("#06B6D4") // cyan-500

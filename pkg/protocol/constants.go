@@ -22,7 +22,7 @@ const ChunkSize = 64 * 1024
 // huge Length field on a control frame.
 const MaxControlFrameSize = 1 * 1024 * 1024
 
-// Frame type constants — the FrameType byte that precedes every frame.
+// Frame type constants - the FrameType byte that precedes every frame.
 const (
 	FrameOffer    uint8 = 0x01 // sender → receiver: transfer offer (JSON)
 	FrameDecision uint8 = 0x02 // receiver → sender: accept/reject  (JSON)

@@ -34,7 +34,7 @@ func LoadOrCreateDeviceID() (string, error) {
 		if len(id) == 32 { // 16 bytes → 32 hex chars
 			return id, nil
 		}
-		// File exists but is malformed — regenerate.
+		// File exists but is malformed - regenerate.
 	}
 
 	// Generate a fresh 128-bit random ID.
