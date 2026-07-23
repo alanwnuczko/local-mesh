@@ -13,7 +13,11 @@ func (m Model) View() string {
 	base := m.renderBase()
 
 	if m.Overlay != nil {
-		return screens.RenderOverlay(base, m.Overlay, m.Width, m.Height)
+		base = screens.RenderOverlay(base, m.Overlay, m.Width, m.Height)
+	}
+
+	if m.Footer != nil {
+		base += "\n" + m.Footer.View(m.Activity)
 	}
 
 	return base

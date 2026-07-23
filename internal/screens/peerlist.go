@@ -12,29 +12,115 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// logoArt is the exact art from ASCII.md — box-drawing block characters that
+// form "LOCALMESH". Each row must be the same rune-width for the gradient to
+// be applied uniformly across all 6 lines.
+var logoArt = [6]string{
+	`██╗      ██████╗  ██████╗ █████╗ ██╗     ███╗   ███╗███████╗███████╗██╗  ██╗`,
+	`██║     ██╔═══██╗██╔════╝██╔══██╗██║     ████╗ ████║██╔════╝██╔════╝██║  ██║`,
+	`██║     ██║   ██║██║     ███████║██║     ██╔████╔██║█████╗  ███████╗███████║`,
+	`██║     ██║   ██║██║     ██╔══██║██║     ██║╚██╔╝██║██╔══╝  ╚════██║██╔══██║`,
+	`███████╗╚██████╔╝╚██████╗██║  ██║███████╗██║ ╚═╝ ██║███████╗███████║██║  ██║`,
+	`╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝`,
+}
+
+// renderLogo applies the left-to-right violet-to-cyan gradient (matching
+// image.png) per character column and returns the coloured logo string.
+// If the terminal panel is narrower than the logo, falls back to a single
+// bold gradient title line.
+func renderLogo(panelInnerW int) string {
+	// Find max rune width across all rows (the last row is slightly wider).
+	maxW := 0
+	for _, row := range logoArt {
+		if w := len([]rune(row)); w > maxW {
+			maxW = w
+		}
+	}
+
+	if panelInnerW < maxW {
+		return renderGradientLine("LOCALMESH")
+	}
+
+	rows := make([]string, len(logoArt))
+	for ri, line := range logoArt {
+		var sb strings.Builder
+		for ci, r := range []rune(line) {
+			t := 0.0
+			if maxW > 1 {
+				t = float64(ci) / float64(maxW-1)
+			}
+			sb.WriteString(lipgloss.NewStyle().
+				Foreground(gradientColor(t)).
+				Render(string(r)))
+		}
+		rows[ri] = sb.String()
+	}
+	return strings.Join(rows, "\n")
+}
+
+// renderGradientLine applies a per-character violet-to-cyan gradient to a single line.
+func renderGradientLine(line string) string {
+	runes := []rune(line)
+	n := len(runes)
+	var sb strings.Builder
+	for i, r := range runes {
+		t := 0.0
+		if n > 1 {
+			t = float64(i) / float64(n-1)
+		}
+		sb.WriteString(lipgloss.NewStyle().
+			Foreground(gradientColor(t)).
+			Bold(true).
+			Render(string(r)))
+	}
+	return sb.String()
+}
+
+// gradientColor interpolates from pink (#EC4899) to orange (#F97316).
+func gradientColor(t float64) lipgloss.Color {
+	r := lerp(0xEC, 0xF9, t)
+	g := lerp(0x48, 0x73, t)
+	b := lerp(0x99, 0x16, t)
+	return lipgloss.Color(fmt.Sprintf("#%02X%02X%02X", r, g, b))
+}
+
+func lerp(a, b int, t float64) int {
+	v := float64(a) + t*float64(b-a)
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return int(v)
+}
+
+// logoLineCount is the number of text rows the logo occupies.
+const logoLineCount = 6
+
 // peerItem wraps a discovery.Peer so it satisfies list.Item.
 type peerItem struct {
 	peer discovery.Peer
 }
 
 func (p peerItem) Title() string {
-	return fmt.Sprintf("%s  %s", p.peer.Hostname, ui.MutedStyle.Render("("+p.peer.ShortID()+")"))
+	return fmt.Sprintf("%s  %s", p.peer.Hostname, ui.StyleMuted.Render("("+p.peer.ShortID()+")"))
 }
 
 func (p peerItem) Description() string {
-	return fmt.Sprintf("%s/%s  %s", p.peer.OS, p.peer.Arch, ui.MutedStyle.Render(p.peer.Addr()))
+	return fmt.Sprintf("%s/%s  %s", p.peer.OS, p.peer.Arch, ui.StyleMuted.Render(p.peer.Addr()))
 }
 
 func (p peerItem) FilterValue() string { return p.peer.Hostname + " " + p.peer.ID }
 
 // PeerList is the default screen: a live list of discovered peers (§4.1).
 type PeerList struct {
-	list      list.Model
-	spinner   spinner.Model
-	selfID    string
-	selfHost  string
-	width     int
-	height    int
+	list     list.Model
+	spinner  spinner.Model
+	selfID   string
+	selfHost string
+	width    int
+	height   int
 }
 
 // NewPeerList creates the peer-list screen.
@@ -42,18 +128,25 @@ func NewPeerList(selfID, selfHost string, width, height int) *PeerList {
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
 		Foreground(ui.ColorAccent).
-		BorderLeftForeground(ui.ColorPrimary)
+		BorderLeftForeground(ui.ColorPrimary).
+		UnsetBackground()
 	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
 		Foreground(ui.ColorMuted).
-		BorderLeftForeground(ui.ColorPrimary)
+		BorderLeftForeground(ui.ColorPrimary).
+		UnsetBackground()
 
-	l := list.New(nil, delegate, width, height-4)
-	l.Title = "local-mesh"
-	l.Styles.Title = ui.TitleStyle
+	innerW, innerH := panelInnerSize(width, height)
+	listH := innerH - logoLineCount - 3
+	if listH < 2 {
+		listH = 2
+	}
+	l := list.New(nil, delegate, innerW, listH)
+	l.Title = ""
+	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
-	l.KeyMap.Quit.SetEnabled(false) // handled by root
+	l.KeyMap.Quit.SetEnabled(false)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -80,7 +173,12 @@ func (pl *PeerList) Update(msg tea.Msg) (*PeerList, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		pl.width = msg.Width
 		pl.height = msg.Height
-		pl.list.SetSize(msg.Width, msg.Height-4)
+		innerW, innerH := panelInnerSize(msg.Width, msg.Height)
+		listH := innerH - logoLineCount - 3
+		if listH < 2 {
+			listH = 2
+		}
+		pl.list.SetSize(innerW, listH)
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -96,46 +194,34 @@ func (pl *PeerList) Update(msg tea.Msg) (*PeerList, tea.Cmd) {
 }
 
 func (pl *PeerList) View() string {
-	var sb strings.Builder
+	innerW, _ := panelInnerSize(pl.width, pl.height)
 
-	// Header showing our own identity.
-	shortID := pl.selfID
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
-	}
-	header := fmt.Sprintf("  %s  %s",
-		ui.HighlightStyle.Render(pl.selfHost),
-		ui.MutedStyle.Render("id:"+shortID),
-	)
-	sb.WriteString(header + "\n")
+	var sb strings.Builder
+	sb.WriteString(renderLogo(innerW))
+	sb.WriteString("\n")
 
 	if len(pl.list.Items()) == 0 {
-		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf("  %s %s\n",
+		sb.WriteString(fmt.Sprintf("\n  %s %s\n",
 			pl.spinner.View(),
-			ui.MutedStyle.Render("Searching for peers on your network…")))
-		sb.WriteString(ui.HelpStyle.Render("\n  q quit • ? help"))
-		return sb.String()
+			ui.StyleMuted.Render("Searching for peers on your network...")))
+		sb.WriteString(ui.HelpStyle.Render("\n  q quit  ?  help"))
+	} else {
+		sb.WriteString(pl.list.View())
+		sb.WriteString("\n" + ui.HelpStyle.Render("  enter select  r refresh  q quit  ? help"))
 	}
 
-	sb.WriteString(pl.list.View())
-	hints := ui.HelpStyle.Render("  ↑/↓ navigate • enter select • r refresh • q quit • ? help")
-	sb.WriteString("\n" + hints)
-
-	return sb.String()
+	return wrapInPanel(sb.String(), pl.width, pl.height)
 }
 
 // UpsertPeer adds or refreshes a peer entry. Called from the root Update only.
-func (pl *PeerList) UpsertPeer(p discovery.Peer) {
+func (pl *PeerList) UpsertPeer(p discovery.Peer) tea.Cmd {
 	items := pl.list.Items()
 	for i, it := range items {
 		if it.(peerItem).peer.ID == p.ID {
-			items[i] = peerItem{peer: p}
-			pl.list.SetItems(items)
-			return
+			return pl.list.SetItem(i, peerItem{peer: p})
 		}
 	}
-	pl.list.InsertItem(len(items), peerItem{peer: p})
+	return pl.list.InsertItem(len(items), peerItem{peer: p})
 }
 
 // RemovePeer removes a peer by device ID. Called from the root Update only.

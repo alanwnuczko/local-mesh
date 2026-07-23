@@ -2,11 +2,11 @@
 
 local-mesh is a zero-configuration terminal UI for transferring files and folders across a local area network.
 
-It relies on mDNS for automatic peer discovery and transfers data over raw TCP. Data integrity is guaranteed via end-to-end SHA-256 verification before any file is committed to disk. The application operates entirely within your local network boundary-requiring no accounts, cloud services, or external routing.
+It relies on mDNS and a custom UDP fallback protocol for peer discovery. Transfers are routed over raw TCP. Data integrity is guaranteed via end-to-end SHA-256 verification before committing files to disk. The application operates entirely within your local network, requiring no accounts, cloud services, or external routing.
 
 ## Features
 
-- **Automatic Peer Discovery:** Instantly discover other instances on the LAN via mDNS (`_localmesh._tcp`).
+- **Automatic Peer Discovery:** Instantly discover LAN instances via mDNS (`_localmesh._tcp`) and UDP broadcast.
 - **Terminal User Interface:** Fully interactive TUI built with [Bubbletea](https://github.com/charmbracelet/bubbletea).
 - **Folder Streaming:** Directories are streamed as tar archives and extracted on the fly, avoiding intermediate disk writes.
 - **Data Integrity:** SHA-256 hashes are computed and verified for all transfers.
@@ -14,28 +14,25 @@ It relies on mDNS for automatic peer discovery and transfers data over raw TCP. 
 - **Cross-Platform:** Native binaries for Windows, macOS, and Linux.
 
 <p align="center">
-  <img src="assets/3.png" width="47.5%" alt="Screenshot 3">
-  <img src="assets/1.png" width="47.5%" alt="Screenshot 1">
+  <img src="assets/2.png" width="49%" alt="Peer Discovery" />
+  <img src="assets/5.png" width="49%" alt="Incoming Transfer" />
 </p>
-
 <p align="center">
-  <img src="assets/2.png" width="60%" alt="Screenshot 2">
+  <img src="assets/3.png" width="49%" alt="Confirm Transfer" />
+  <img src="assets/4.png" width="49%" alt="Transferring File" />
 </p>
-
 
 ## Installation
 
 Go 1.22 or newer is required to build from source.
 
-### Option 1: Install via
-
-This compiles the binary and places it in your Go environment's `bin` directory.
+### Option 1: Install via Go
 
 ```sh
 go install github.com/alanwnuczko/local-mesh/cmd/local-mesh@latest
 ```
 
-Ensure your Go `bin` directory is in your system's `PATH`:
+Ensure your Go `bin` directory is in your `PATH`:
 - **Windows:** `%USERPROFILE%\go\bin`
 - **macOS / Linux:** `$HOME/go/bin`
 
@@ -47,7 +44,7 @@ cd local-mesh
 go build -o local-mesh ./cmd/local-mesh
 ```
 
-Move the resulting binary to a location in your `PATH` (e.g., `/usr/local/bin` on Unix systems).
+Move the resulting binary to a location in your `PATH`.
 
 ## Usage
 
@@ -61,7 +58,7 @@ local-mesh
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` (or `j` / `k`) | Navigate lists |
+| `↑` / `↓` / `j` / `k` | Navigate lists |
 | `Enter` | Select peer / Confirm transfer |
 | `r` | Refresh peer list |
 | `s` | Select current directory for folder transfer |
@@ -85,11 +82,11 @@ local-mesh
 
 ## Network Requirements
 
-local-mesh requires a shared Layer 2 network segment (subnet) for mDNS multicast packets to reach peers.
+local-mesh requires a shared Layer 2 network segment for multicast and broadcast packets to reach peers.
 
 ### Windows Environments
-- **Firewall:** You may need to run the application as Administrator on the first launch to automatically configure the Windows Firewall to allow inbound UDP traffic on port 5353.
-- **Virtual Machines:** If running a VM (VMware, VirtualBox), the network adapter must be set to **Bridged** mode, or a dedicated **Host-Only** adapter must be added. Standard NAT adapters block multicast discovery.
+- **Firewall:** You must run the application as Administrator on the first launch to automatically configure the Windows Firewall for UDP ports 5353 and 53333.
+- **Virtual Machines:** Virtual network adapters must support broadcast routing. Bridged and Host-Only modes are recommended. Standard NAT adapters may block discovery.
 
 ## Protocol Architecture
 

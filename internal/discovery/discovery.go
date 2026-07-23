@@ -96,6 +96,7 @@ func (s *Service) Registry() *Registry { return s.registry }
 // Browse starts the mDNS browser goroutine (spec §3.1 goroutine #2).
 func (s *Service) Browse(ctx context.Context) {
 	go s.browseLoop(ctx)
+	s.startFallbackBroadcast(ctx)
 }
 
 func (s *Service) browseLoop(ctx context.Context) {

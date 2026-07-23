@@ -29,7 +29,7 @@ type Confirm struct {
 // NewConfirm creates the confirmation screen.
 func NewConfirm(peer discovery.Peer, path string, isDir bool, width, height int) *Confirm {
 	sp := spinner.New()
-	sp.Spinner = spinner.Dot
+	sp.Spinner = spinner.Points
 	sp.Style = lipgloss.NewStyle().Foreground(ui.ColorAccent)
 
 	return &Confirm{
@@ -71,31 +71,38 @@ func (c *Confirm) View() string {
 	var sb strings.Builder
 	sb.WriteString(ui.TitleStyle.Render("Confirm Transfer") + "\n\n")
 
-	sb.WriteString(fmt.Sprintf("  Target:  %s  %s\n",
-		ui.HighlightStyle.Render(c.peer.Hostname),
-		ui.MutedStyle.Render("("+c.peer.ShortID()+")")))
-
 	kind := "file"
 	if c.isDir {
 		kind = "folder"
 	}
-	sb.WriteString(fmt.Sprintf("  Type:    %s\n", kind))
-	sb.WriteString(fmt.Sprintf("  Path:    %s\n", ui.MutedStyle.Render(filepath.Base(c.path))))
+
+	sb.WriteString(row("Target", ui.StyleAccent.Render(c.peer.Hostname)+"  "+ui.StyleMuted.Render("("+c.peer.ShortID()+")")))
+	sb.WriteString(row("Type", ui.StyleValue.Render(kind)))
+	sb.WriteString(row("Name", ui.StyleValue.Render(filepath.Base(c.path))))
 
 	if c.computeErr != nil {
-		sb.WriteString("\n  " + ui.ErrorStyle.Render("Error: "+c.computeErr.Error()) + "\n")
-		sb.WriteString(ui.HelpStyle.Render("  esc back • q quit"))
+		sb.WriteString("\n  " + ui.StyleDanger.Render("Error: "+c.computeErr.Error()) + "\n")
+		sb.WriteString(ui.HelpStyle.Render("  esc back  q quit"))
 	} else if c.computing {
-		sb.WriteString(fmt.Sprintf("\n  Size:    %s %s\n",
-			c.spinner.View(), ui.MutedStyle.Render("calculating…")))
+		sb.WriteString("\n  " + c.spinner.View() + "  " + ui.StyleMuted.Render("Calculating size and checksum...") + "\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("\n  Size:    %s\n", ui.HighlightStyle.Render(formatBytes(c.size))))
+		sb.WriteString(row("Size", ui.StyleAccent.Render(formatBytes(c.size))))
 		if len(c.checksum) > 16 {
-			sb.WriteString(fmt.Sprintf("  SHA-256: %s\n", ui.MutedStyle.Render(c.checksum[:16]+"…")))
+			sb.WriteString(row("SHA-256", ui.StyleMuted.Render(c.checksum[:16]+"...")))
 		}
-		sb.WriteString("\n" + ui.HelpStyle.Render("  y/enter confirm • N/esc cancel • q quit"))
+		sb.WriteString("\n")
+		sb.WriteString("  " + ui.StyleSuccess.Render("y / enter") + ui.StyleMuted.Render("  confirm   "))
+		sb.WriteString(ui.StyleDanger.Render("N / esc") + ui.StyleMuted.Render("  cancel") + "\n")
 	}
-	return sb.String()
+	return wrapInPanel(sb.String(), c.width, c.height)
+}
+
+// row renders a label-value pair with consistent column alignment.
+func row(label, value string) string {
+	return fmt.Sprintf("  %s  %s\n",
+		ui.StyleLabel.Render(fmt.Sprintf("%-8s", label+":")),
+		value,
+	)
 }
 
 // IsReady returns true when the compute pre-pass has finished without error.

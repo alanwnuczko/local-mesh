@@ -29,8 +29,12 @@ type Progress struct {
 
 // NewProgress creates the progress screen.
 func NewProgress(dir transfer.Direction, total int64, width, height int) *Progress {
-	bar := progress.New(progress.WithDefaultGradient())
-	bar.Width = width - 10
+	bar := progress.New(
+		progress.WithGradient("#EC4899", "#F97316"),
+		progress.WithoutPercentage(),
+	)
+	innerW, _ := panelInnerSize(width, height)
+	bar.Width = innerW - 4
 	return &Progress{
 		bar:        bar,
 		direction:  dir,
@@ -73,7 +77,8 @@ func (p *Progress) Update(msg tea.Msg) (*Progress, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		p.width = msg.Width
 		p.height = msg.Height
-		p.bar.Width = msg.Width - 10
+		innerW, _ := panelInnerSize(msg.Width, msg.Height)
+		p.bar.Width = innerW - 4
 	}
 	_, barCmd := p.bar.Update(msg)
 	cmds = append(cmds, barCmd)
@@ -89,14 +94,14 @@ func (p *Progress) View() string {
 	}
 	sb.WriteString(ui.TitleStyle.Render(dirLabel) + "\n\n")
 
-	phStyle := ui.HighlightStyle
+	phStyle := ui.StyleAccent
 	switch p.phase {
 	case transfer.PhaseDone:
-		phStyle = ui.SuccessStyle
+		phStyle = ui.StyleSuccess
 	case transfer.PhaseFailed:
-		phStyle = ui.ErrorStyle
+		phStyle = ui.StyleDanger
 	}
-	sb.WriteString(fmt.Sprintf("  Phase:    %s\n", phStyle.Render(p.phase.String())))
+	sb.WriteString(row("Phase", phStyle.Render(p.phase.String())))
 
 	var pct float64
 	if p.bytesTotal > 0 {
@@ -105,28 +110,30 @@ func (p *Progress) View() string {
 			pct = 1
 		}
 	}
-	sb.WriteString("  " + p.bar.ViewAs(pct) + "\n\n")
+	sb.WriteString("\n  " + p.bar.ViewAs(pct) + "\n\n")
 
-	sb.WriteString(fmt.Sprintf("  Progress: %s / %s\n",
-		formatBytes(p.bytesDone), formatBytes(p.bytesTotal)))
+	sb.WriteString(row("Progress", fmt.Sprintf("%s / %s",
+		ui.StyleAccent.Render(formatBytes(p.bytesDone)),
+		ui.StyleMuted.Render(formatBytes(p.bytesTotal)))))
+
 	if p.bps > 0 {
-		sb.WriteString(fmt.Sprintf("  Speed:    %s/s\n", formatBytes(int64(p.bps))))
+		sb.WriteString(row("Speed", ui.StyleValue.Render(formatBytes(int64(p.bps))+"/s")))
 	}
 	elapsed := time.Since(p.startTime).Round(time.Second)
-	sb.WriteString(fmt.Sprintf("  Elapsed:  %s\n", elapsed))
+	sb.WriteString(row("Elapsed", ui.StyleValue.Render(elapsed.String())))
 
 	if p.lastErr != "" {
-		sb.WriteString("\n  " + ui.ErrorStyle.Render("Error: "+p.lastErr) + "\n")
+		sb.WriteString("\n  " + ui.StyleDanger.Render("Error: "+p.lastErr) + "\n")
 	}
 	if p.done {
 		if p.phase == transfer.PhaseDone {
-			sb.WriteString("\n  " + ui.SuccessStyle.Render("✓ Transfer complete") + "\n")
+			sb.WriteString("\n  " + ui.StyleSuccess.Render("Transfer complete") + "\n")
 		}
-		sb.WriteString(ui.HelpStyle.Render("\n  enter/esc return to peer list"))
+		sb.WriteString(ui.HelpStyle.Render("\n  enter / esc  return to peer list"))
 	} else {
-		sb.WriteString(ui.HelpStyle.Render("\n  c cancel transfer"))
+		sb.WriteString(ui.HelpStyle.Render("\n  c  cancel transfer"))
 	}
-	return sb.String()
+	return wrapInPanel(sb.String(), p.width, p.height)
 }
 
 // IsDone returns true when the transfer has completed (success or failure).

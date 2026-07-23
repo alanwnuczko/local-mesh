@@ -19,9 +19,9 @@ var (
 
 	TitleStyle     = ui.TitleStyle
 	HighlightStyle = ui.HighlightStyle
-	SuccessStyle   = ui.SuccessStyle
-	ErrorStyle     = ui.ErrorStyle
-	MutedStyle     = ui.MutedStyle
+	SuccessStyle   = ui.StyleSuccess
+	ErrorStyle     = ui.StyleDanger
+	MutedStyle     = ui.StyleMuted
 	HelpStyle      = ui.HelpStyle
 	OverlayStyle   = ui.OverlayStyle
 	BoxStyle       = ui.BoxStyle

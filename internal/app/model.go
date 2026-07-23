@@ -69,6 +69,12 @@ type Model struct {
 
 	// Whether the help footer is expanded.
 	ShowHelp bool
+
+	// Footer is the persistent status bar rendered at the bottom of every screen.
+	Footer *screens.Footer
+
+	// Activity tracks the current transfer state for the footer indicator.
+	Activity screens.ActivityStatus
 }
 
 // NewModel creates the root model, wiring up all screen sub-models.
@@ -80,6 +86,7 @@ func NewModel(selfID, selfHost string, width, height int) Model {
 		Height:   height,
 		PeerList: screens.NewPeerList(selfID, selfHost, width, height),
 		Picker:   screens.NewPicker(width, height),
+		Footer:   screens.NewFooter(selfHost, selfID, width),
 	}
 }
 

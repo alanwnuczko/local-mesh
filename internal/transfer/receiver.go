@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -14,13 +15,16 @@ import (
 )
 
 // OfferDecider is called by the receiver when an offer arrives. It must block
-// until the UI (or auto-logic) provides a DecisionMessage.
+// until the UI (or auto-logic) provides a DecisionMessage, or until ctx is
+// cancelled. On cancellation it must return a rejection immediately so that
+// RunReceive can exit and the connection can be closed cleanly.
 // The channel-based approach (§3.3) keeps the blocked goroutine and the UI
 // decoupled while preserving the "mutate only in Update" rule.
-type OfferDecider func(offer protocol.OfferMessage) protocol.DecisionMessage
+type OfferDecider func(ctx context.Context, offer protocol.OfferMessage) protocol.DecisionMessage
 
 // RecvConfig holds everything the receive goroutine needs.
 type RecvConfig struct {
+	Ctx      context.Context // governs the lifetime of this receive session
 	Conn     io.ReadWriter
 	Decider  OfferDecider
 	Progress chan<- ProgressEvent
@@ -74,8 +78,9 @@ func RunReceive(cfg RecvConfig) {
 		return
 	}
 
-	// Phase 2: ask the decider (blocks until UI responds via reply channel).
-	decision := cfg.Decider(offer)
+	// Phase 2: ask the decider (blocks until UI responds via reply channel, or
+	// until cfg.Ctx is cancelled - e.g. the user quits while the overlay is up).
+	decision := cfg.Decider(cfg.Ctx, offer)
 
 	// Send FrameDecision.
 	decPayload, _ := protocol.MarshalDecision(decision)
@@ -292,7 +297,7 @@ func sendErrorFrame(w io.Writer, transferID, code, msg string) {
 }
 
 // AutoAcceptDecider always accepts offers. Used during headless testing (M3).
-func AutoAcceptDecider(offer protocol.OfferMessage) protocol.DecisionMessage {
+func AutoAcceptDecider(_ context.Context, offer protocol.OfferMessage) protocol.DecisionMessage {
 	return protocol.DecisionMessage{
 		TransferID: offer.TransferID,
 		Accepted:   true,
@@ -302,11 +307,30 @@ func AutoAcceptDecider(offer protocol.OfferMessage) protocol.DecisionMessage {
 // ChannelDecider creates an OfferDecider that sends the offer on offerCh and
 // blocks waiting for a reply on the returned reply channel. The caller (bus)
 // forwards offerCh entries to the UI via program.Send(IncomingOfferMsg{...}).
+//
+// If ctx is cancelled before the UI replies (e.g. the receiver process exits
+// while the accept/reject overlay is displayed), ChannelDecider returns an
+// immediate rejection instead of blocking forever. Without this, the receive
+// goroutine would leak, keeping the TCP connection half-open until the OS
+// resets it - which produces the sender-side "wsarecv: connection forcibly
+// closed" error.
 func ChannelDecider(offerCh chan<- OfferWithReply) OfferDecider {
-	return func(offer protocol.OfferMessage) protocol.DecisionMessage {
+	return func(ctx context.Context, offer protocol.OfferMessage) protocol.DecisionMessage {
 		reply := make(chan protocol.DecisionMessage, 1)
 		offerCh <- OfferWithReply{Offer: offer, Reply: reply}
-		return <-reply
+		select {
+		case dec := <-reply:
+			return dec
+		case <-ctx.Done():
+			// Receiver is shutting down - reject so RunReceive exits promptly
+			// and the deferred conn.Close() fires, sending a clean TCP FIN
+			// instead of leaving the socket half-open until the OS RSTs it.
+			return protocol.DecisionMessage{
+				TransferID: offer.TransferID,
+				Accepted:   false,
+				Reason:     protocol.ErrBusy,
+			}
+		}
 	}
 }
 
