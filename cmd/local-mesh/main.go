@@ -75,11 +75,11 @@ func main() {
 		sendRegCh <- sendChanPair{progress: progress, done: done}
 	}
 
-	// tea.WithAltScreen() causes a blank screen on Windows until the user
-	// presses a key (the alt-screen buffer waits for a terminal resize event
-	// that never arrives on CMD/PowerShell). We omit it so the TUI renders
-	// inline immediately on all platforms.
-	p := tea.NewProgram(model)
+	// tea.WithAltScreen() gives Bubbletea a dedicated full-screen canvas that
+	// is cleared on every render, eliminating leftover lines when the terminal
+	// is resized. The first-paint blank-screen issue on Windows CMD/PowerShell
+	// is resolved by tea.ClearScreen returned from Init().
+	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	b := bus.New(p)
 	b.ForwardDiscovery(svc.Events())

@@ -66,6 +66,7 @@ func (s *Server) Serve(ctx context.Context) {
 		go func(c net.Conn) {
 			defer c.Close()
 			RunReceive(RecvConfig{
+				Ctx:      ctx,
 				Conn:     c,
 				Decider:  s.decider,
 				Progress: s.progress,

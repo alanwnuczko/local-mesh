@@ -73,27 +73,32 @@ func RenderOverlay(base string, overlay *OverlayState, width, height int) string
 
 func renderOverlayContent(o *OverlayState) string {
 	var sb strings.Builder
-	sb.WriteString(ui.TitleStyle.Render("Incoming Transfer Request") + "\n\n")
+	sb.WriteString(ui.TitleStyle.Render("Incoming Transfer") + "\n\n")
 
 	senderID := o.Offer.SenderID
 	if len(senderID) > 8 {
 		senderID = senderID[:8]
 	}
-	sb.WriteString(fmt.Sprintf("  From:  %s  %s\n",
-		ui.HighlightStyle.Render(o.Offer.SenderHost),
-		ui.MutedStyle.Render("("+senderID+")")))
+	sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
+		ui.StyleLabel.Render("From:  "),
+		ui.StyleAccent.Render(o.Offer.SenderHost),
+		ui.StyleMuted.Render("("+senderID+")")))
 
 	kind := "file"
 	if o.Offer.IsDir {
 		kind = "folder"
 	}
-	sb.WriteString(fmt.Sprintf("  Name:  %s  (%s)\n",
-		ui.HighlightStyle.Render(o.Offer.Name), kind))
-	sb.WriteString(fmt.Sprintf("  Size:  %s\n",
-		ui.HighlightStyle.Render(formatBytes(o.Offer.Size))))
+	sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
+		ui.StyleLabel.Render("Name:  "),
+		ui.StyleAccent.Render(o.Offer.Name),
+		ui.StyleMuted.Render("("+kind+")")))
+
+	sb.WriteString(fmt.Sprintf("  %s  %s\n",
+		ui.StyleLabel.Render("Size:  "),
+		ui.StyleAccent.Render(formatBytes(o.Offer.Size))))
 
 	sb.WriteString("\n")
-	sb.WriteString(ui.SuccessStyle.Render("  a/y") + " accept   ")
-	sb.WriteString(ui.ErrorStyle.Render("d/N/esc") + " reject\n")
+	sb.WriteString("  " + ui.StyleSuccess.Render("a / y") + ui.StyleMuted.Render("  accept   "))
+	sb.WriteString(ui.StyleDanger.Render("d / N / esc") + ui.StyleMuted.Render("  reject") + "\n")
 	return sb.String()
 }

@@ -86,6 +86,6 @@ func (p *Picker) Update(msg tea.Msg) (*Picker, tea.Cmd) {
 
 func (p *Picker) View() string {
 	header := ui.TitleStyle.Render("Select file or folder") + "\n"
-	help := ui.HelpStyle.Render("  ↑/↓ navigate • enter select file • s select current folder • esc back • q quit")
+	help := ui.HelpStyle.Render("  enter select file  s select current folder  esc back  q quit")
 	return header + p.fp.View() + "\n" + help
 }

@@ -28,6 +28,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
+		if m.Footer != nil {
+			m.Footer.SetWidth(msg.Width)
+		}
 		// Propagate to all sub-models.
 		m.PeerList, _ = m.PeerList.Update(msg)
 		m.Picker, _ = m.Picker.Update(msg)
@@ -56,8 +59,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case PeerFoundMsg:
-		m.PeerList.UpsertPeer(msg.Peer)
-		return m, nil
+		cmd := m.PeerList.UpsertPeer(msg.Peer)
+		return m, cmd
 
 	case PeerLostMsg:
 		m.PeerList.RemovePeer(msg.Peer.ID)
@@ -93,14 +96,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case SendDoneMsg:
+	case RecvDoneMsg:
+		m.ReceiveBusy = false
+		m.Activity = screens.ActivityIdle
 		if m.Progress != nil {
 			m.Progress.SetDone(msg.Event.Err)
 		}
 		return m, nil
 
-	case RecvDoneMsg:
-		m.ReceiveBusy = false
+	case SendDoneMsg:
+		m.Activity = screens.ActivityIdle
 		if m.Progress != nil {
 			m.Progress.SetDone(msg.Event.Err)
 		}
@@ -215,6 +220,7 @@ func (m Model) startSend() (tea.Model, tea.Cmd) {
 
 	m.Progress = screens.NewProgress(transfer.DirSend, m.Confirm.Size(), m.Width, m.Height)
 	m.ActiveScreen = ScreenProgress
+	m.Activity = screens.ActivityTransferring
 
 	addr := m.SelectedPeer.Addr()
 	path := m.SelectedPath
@@ -246,6 +252,7 @@ func (m Model) updateProgress(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.ActiveScreen = ScreenPeerList
 			m.Progress = nil
+			m.Activity = screens.ActivityIdle
 			return m, nil
 		case "enter", "esc":
 			if m.Progress != nil && m.Progress.IsDone() {
@@ -277,6 +284,7 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Show receive-progress screen.
 		m.Progress = screens.NewProgress(transfer.DirRecv, overlay.Offer.Size, m.Width, m.Height)
 		m.ActiveScreen = ScreenProgress
+		m.Activity = screens.ActivityReceiving
 		// Send accept decision via Cmd (not directly in Update) to preserve the
 		// concurrency invariant: channel sends happen in Cmd goroutines only.
 		return m, sendDecisionCmd(overlay.Reply, overlay.ReplyAccept())
