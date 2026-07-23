@@ -46,6 +46,19 @@ go build -o local-mesh ./cmd/local-mesh
 
 Move the resulting binary to a location in your `PATH`.
 
+### Option 3: Pre-compiled Binaries
+
+Download the executable for your OS from the [GitHub Releases page](https://github.com/alanwnuczko/local-mesh/releases). To run the app from any terminal directory, you must add the folder containing the executable to your system's `PATH`.
+
+**Windows:**
+1. Extract the executable to a permanent folder (e.g. `C:\local-mesh`).
+2. Open the Start menu, search for "Environment Variables", and press Enter.
+3. Edit the **Path** variable under "User variables".
+4. Add `C:\local-mesh` and click OK. Restart your terminal.
+
+**macOS / Linux:**
+Move the executable to `/usr/local/bin` using `sudo mv local-mesh /usr/local/bin/`.
+
 ## Usage
 
 Start the application by running the binary in your terminal:
