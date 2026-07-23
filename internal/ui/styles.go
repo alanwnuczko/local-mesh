@@ -94,7 +94,6 @@ var (
 	OverlayStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorPrimary).
-			Background(ColorSurface).
 			Padding(1, 3)
 
 	// BoxStyle is a legacy alias - kept for compatibility.

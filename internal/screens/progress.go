@@ -30,7 +30,7 @@ type Progress struct {
 // NewProgress creates the progress screen.
 func NewProgress(dir transfer.Direction, total int64, width, height int) *Progress {
 	bar := progress.New(
-		progress.WithDefaultGradient(),
+		progress.WithGradient("#EC4899", "#F97316"),
 		progress.WithoutPercentage(),
 	)
 	innerW, _ := panelInnerSize(width, height)
