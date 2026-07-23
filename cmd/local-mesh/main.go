@@ -130,6 +130,15 @@ func ensureWindowsFirewallRule() {
 			},
 		},
 		{
+			name: "local-mesh Fallback",
+			args: []string{
+				"advfirewall", "firewall", "add", "rule",
+				"name=local-mesh Fallback",
+				"protocol=UDP", "dir=in", "localport=53333",
+				"action=allow", "profile=any",
+			},
+		},
+		{
 			name: "local-mesh TCP",
 			args: []string{
 				"advfirewall", "firewall", "add", "rule",
