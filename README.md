@@ -59,6 +59,11 @@ Download the executable for your OS from the [GitHub Releases page](https://gith
 **macOS / Linux:**
 Move the executable to `/usr/local/bin` using `sudo mv local-mesh /usr/local/bin/`.
 
+<p align="center">
+  <img src="assets/6.png" width="49%" alt="Ubuntu" />
+  <img src="assets/7.png" width="49%" alt="Ubuntu" />
+</p>
+
 ## Usage
 
 Start the application by running the binary in your terminal:
