@@ -42,6 +42,9 @@ func RenderOverlay(base string, overlay *OverlayState, width, height int) string
 
 	content := renderOverlayContent(overlay)
 	boxWidth := width - 8
+	if boxWidth < 1 {
+		boxWidth = 1
+	}
 	if boxWidth > 60 {
 		boxWidth = 60
 	}
@@ -62,10 +65,16 @@ func RenderOverlay(base string, overlay *OverlayState, width, height int) string
 			result = append(result, l)
 		}
 	}
-	// In case base is shorter than overlay position.
+	// In case base is shorter than overlay position, append any remaining box lines.
 	for len(result) < topPad+len(boxLines) {
-		result = append(result, strings.Join(boxLines[len(result)-topPad:], "\n"))
-		break
+		boxIdx := len(result) - topPad
+		if boxIdx < 0 {
+			boxIdx = 0
+		}
+		if boxIdx >= len(boxLines) {
+			break
+		}
+		result = append(result, boxLines[boxIdx])
 	}
 
 	return strings.Join(result, "\n")

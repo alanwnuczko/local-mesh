@@ -10,7 +10,7 @@ It relies on mDNS and a custom UDP fallback protocol for peer discovery. Transfe
 - **Terminal User Interface:** Fully interactive TUI built with [Bubbletea](https://github.com/charmbracelet/bubbletea).
 - **Folder Streaming:** Directories are streamed as tar archives and extracted on the fly, avoiding intermediate disk writes.
 - **Data Integrity:** SHA-256 hashes are computed and verified for all transfers.
-- **Collision Protection:** Files are never overwritten; suffixes (e.g., `(1)`) are automatically appended to duplicate names.
+- **Collision Protection:** Files are never overwritten; suffixes (e.g. `(1)`) are automatically appended to duplicate names.
 - **Cross-Platform:** Native binaries for Windows, macOS, and Linux.
 
 <p align="center">
