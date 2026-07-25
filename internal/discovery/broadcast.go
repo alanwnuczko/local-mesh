@@ -146,20 +146,24 @@ func (s *Service) fallbackSendLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			sendAll()
+		case <-s.refreshBeacon:
+			// Manual refresh (r key): fire beacons right away so peers on the
+			// UDP fallback path reappear without waiting for the 3s ticker.
+			sendAll()
+			slog.Debug("fallback: immediate beacon sent (manual refresh)")
 		}
 	}
 }
 
 func (s *Service) handleFallbackPeer(peer Peer) {
-	// The registry and events are shared with mDNS.
-	// Since handleEntry expects a lastSeen map for sweeping, we handle that carefully.
-	// We'll let mDNS's sweep handle mDNS peers, but fallback peers don't expire via mDNS sweep
-	// if we don't track them there. For now, since mDNS is broken on Windows, we just Upsert.
-	// The heartbeat mechanism will keep them alive or we can add a sweep mechanism.
+	// Keep lastSeen in sync so the shared expiry sweep covers UDP peers too.
+	s.lastSeenMu.Lock()
+	s.lastSeen[peer.ID] = time.Now()
+	s.lastSeenMu.Unlock()
+
 	s.registry.Upsert(peer)
 
-	// In discovery.go, we only emit EventPeerFound once.
-	// We'll emit it, and peerlist will handle idempotency via UpsertPeer.
+	// peerlist handles idempotency via UpsertPeer.
 	select {
 	case s.events <- Event{Kind: EventPeerFound, Peer: peer}:
 	default:

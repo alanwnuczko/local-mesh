@@ -41,18 +41,33 @@ func RunSend(cfg SendConfig) {
 		}
 	}()
 
-	// Phase 1: compute size and checksum.
 	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseOffering}
 
-	size, checksum, err := computePayloadMeta(cfg.Path, cfg.IsDir)
-	if err != nil {
-		sendErr = fmt.Errorf("compute payload meta: %w", err)
-		return
+	var (
+		size      int64
+		checksum  string
+		tmpTar    string // non-empty only when cfg.IsDir is true
+	)
+
+	if cfg.IsDir {
+		var err error
+		size, checksum, tmpTar, err = tarFolderToTemp(cfg.Path)
+		if err != nil {
+			sendErr = fmt.Errorf("tar folder: %w", err)
+			return
+		}
+		defer os.Remove(tmpTar)
+	} else {
+		var err error
+		size, checksum, err = computePayloadMeta(cfg.Path, false)
+		if err != nil {
+			sendErr = fmt.Errorf("compute payload meta: %w", err)
+			return
+		}
 	}
 
 	name := filepath.Base(cfg.Path)
 
-	// Phase 2: send FrameOffer.
 	offer := protocol.OfferMessage{
 		Version:    protocol.ProtocolVersion,
 		SenderID:   cfg.SenderID,
@@ -69,7 +84,6 @@ func RunSend(cfg SendConfig) {
 		return
 	}
 
-	// Phase 3: await FrameDecision.
 	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseWaiting, BytesTotal: size}
 	ft, raw, err := protocol.ReadFrame(cfg.Conn)
 	if err != nil {
@@ -95,15 +109,13 @@ func RunSend(cfg SendConfig) {
 		return
 	}
 
-	// Phase 4: stream chunks.
 	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseTransferring, BytesTotal: size}
-	bytesSent, err := streamPayload(cfg.Conn, cfg.Path, cfg.IsDir, transferID, size, cfg.Progress)
+	bytesSent, err := streamPayload(cfg.Conn, cfg.Path, cfg.IsDir, tmpTar, transferID, size, cfg.Progress)
 	if err != nil {
 		sendErr = err
 		return
 	}
 
-	// Phase 5: send FrameComplete.
 	comp, _ := protocol.MarshalComplete(protocol.CompleteMessage{
 		TransferID: transferID,
 		BytesSent:  bytesSent,
@@ -113,7 +125,6 @@ func RunSend(cfg SendConfig) {
 		return
 	}
 
-	// Phase 6: await FrameAck.
 	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseVerifying, BytesDone: bytesSent, BytesTotal: size}
 	ft, raw, err = protocol.ReadFrame(cfg.Conn)
 	if err != nil {
@@ -163,12 +174,52 @@ func computePayloadMeta(path string, isDir bool) (size int64, checksum string, e
 	return cw.n, hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// tarFolderToTemp tars the directory at srcDir into an OS temp file.
+// It returns the byte size, hex SHA-256, and the temp-file path.
+// The caller is responsible for removing the temp file when done.
+func tarFolderToTemp(srcDir string) (size int64, checksum string, tmpPath string, err error) {
+	tmp, err := os.CreateTemp("", "lm-send-*.tar")
+	if err != nil {
+		return 0, "", "", fmt.Errorf("create temp tar: %w", err)
+	}
+	tmpPath = tmp.Name()
+
+	h := sha256.New()
+	mw := io.MultiWriter(tmp, h)
+	if err = TarFolder(srcDir, mw); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return 0, "", "", fmt.Errorf("tar folder: %w", err)
+	}
+	if err = tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return 0, "", "", fmt.Errorf("close temp tar: %w", err)
+	}
+
+	fi, err := os.Stat(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return 0, "", "", fmt.Errorf("stat temp tar: %w", err)
+	}
+	return fi.Size(), hex.EncodeToString(h.Sum(nil)), tmpPath, nil
+}
+
 // streamPayload sends the file/folder payload as FrameChunk frames and returns
-// the total bytes sent.
-func streamPayload(w io.Writer, path string, isDir bool, transferID string, totalSize int64, progress chan<- ProgressEvent) (int64, error) {
+// the total bytes sent. tmpTar, if non-empty, is a pre-built tar file to stream
+// instead of re-running TarFolder (used for directory transfers).
+func streamPayload(w io.Writer, path string, isDir bool, tmpTar string, transferID string, totalSize int64, progress chan<- ProgressEvent) (int64, error) {
 	var src io.Reader
 
-	if isDir {
+	if isDir && tmpTar != "" {
+		// Stream from the pre-built temp tar file.
+		f, err := os.Open(tmpTar)
+		if err != nil {
+			return 0, fmt.Errorf("open temp tar: %w", err)
+		}
+		defer f.Close()
+		src = f
+	} else if isDir {
+		// Fallback: stream on-the-fly (should not normally reach here).
 		pr, pw := io.Pipe()
 		go func() {
 			pw.CloseWithError(TarFolder(path, pw))

@@ -147,6 +147,10 @@ func NewPeerList(selfID, selfHost string, width, height int) *PeerList {
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
 	l.KeyMap.Quit.SetEnabled(false)
+	// App-level ? toggles help overlay; disable the list's built-in help
+	// binding so it cannot swallow the key if it ever reaches the list.
+	l.KeyMap.ShowFullHelp.SetEnabled(false)
+	l.KeyMap.CloseFullHelp.SetEnabled(false)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot

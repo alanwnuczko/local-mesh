@@ -13,6 +13,10 @@ import (
 // without adding a dependency on the bus from the app package.
 type OnStartSendFunc func(progress chan transfer.ProgressEvent, done chan transfer.DoneEvent)
 
+// OnRefreshFunc is called when the user presses r on the peer list to
+// force-refresh discovery (re-query mDNS + fire a UDP beacon).
+type OnRefreshFunc func()
+
 // Screen identifies which screen is currently active.
 type Screen int
 
@@ -63,11 +67,15 @@ type Model struct {
 	// register the new channels with the bus. Set before calling p.Run().
 	OnStartSend OnStartSendFunc
 
+	// OnRefresh is called when the user force-refreshes the peer list.
+	// Set before calling p.Run(); it must only signal discovery (no Model access).
+	OnRefresh OnRefreshFunc
+
 	// Terminal dimensions.
 	Width  int
 	Height int
 
-	// Whether the help footer is expanded.
+	// Whether the full help overlay is visible (? toggles it).
 	ShowHelp bool
 
 	// Footer is the persistent status bar rendered at the bottom of every screen.
