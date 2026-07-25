@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -20,7 +21,12 @@ import (
 
 func main() {
 	// Log to a file so output does not interfere with the TUI.
-	logFile, err := os.OpenFile("local-mesh.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	exePath, exeErr := os.Executable()
+	logPath := "local-mesh.log" // fallback: current dir
+	if exeErr == nil {
+		logPath = filepath.Join(filepath.Dir(exePath), "local-mesh.log")
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
 		slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
 			Level: slog.LevelDebug,
@@ -73,6 +79,10 @@ func main() {
 	sendRegCh := make(chan sendChanPair, 8)
 	model.OnStartSend = func(progress chan transfer.ProgressEvent, done chan transfer.DoneEvent) {
 		sendRegCh <- sendChanPair{progress: progress, done: done}
+	}
+	// r on the peer list force-refreshes discovery (mDNS re-query + UDP beacon).
+	model.OnRefresh = func() {
+		svc.Refresh()
 	}
 
 	// tea.WithAltScreen() gives Bubbletea a dedicated full-screen canvas that

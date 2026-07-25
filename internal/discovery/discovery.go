@@ -7,6 +7,7 @@ import (
 	"net"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grandcat/zeroconf"
@@ -35,6 +36,17 @@ type Service struct {
 	events   chan Event
 	server   *zeroconf.Server
 	ifaces   []net.Interface
+
+	// refreshBrowse / refreshBeacon are signalled by Refresh() so the user can
+	// force a re-query (r key) without restarting the whole service.
+	refreshBrowse chan struct{}
+	refreshBeacon chan struct{}
+
+	// lastSeen tracks when each peer was last observed (mDNS or refresh).
+	// Guarded by lastSeenMu because the continuous browser and one-shot
+	// refresh browse may write concurrently.
+	lastSeenMu sync.Mutex
+	lastSeen   map[string]time.Time
 }
 
 // New creates a Service and registers this instance via mDNS/DNS-SD.
@@ -77,14 +89,32 @@ func New(deviceID, hostname string, port int) (*Service, error) {
 	)
 
 	return &Service{
-		deviceID: deviceID,
-		hostname: hostname,
-		port:     port,
-		registry: registry,
-		events:   make(chan Event, 64),
-		server:   server,
-		ifaces:   ifaces,
+		deviceID:       deviceID,
+		hostname:      hostname,
+		port:          port,
+		registry:      registry,
+		events:        make(chan Event, 64),
+		server:        server,
+		ifaces:        ifaces,
+		refreshBrowse: make(chan struct{}, 1),
+		refreshBeacon: make(chan struct{}, 1),
+		lastSeen:      make(map[string]time.Time),
 	}, nil
+}
+
+// Refresh force-triggers a fresh mDNS browse query and an immediate UDP
+// fallback beacon. Safe to call from the Bubbletea Update path: both signals
+// are non-blocking (buffered, drop-if-pending).
+func (s *Service) Refresh() {
+	select {
+	case s.refreshBrowse <- struct{}{}:
+	default:
+	}
+	select {
+	case s.refreshBeacon <- struct{}{}:
+	default:
+	}
+	slog.Info("discovery: manual refresh requested")
 }
 
 // Events returns the read-only channel of discovery events.
@@ -125,7 +155,6 @@ func (s *Service) browseLoop(ctx context.Context) {
 	}
 	slog.Info("mDNS browser started", "ifaces", ifaceNames(s.ifaces))
 
-	lastSeen := make(map[string]time.Time)
 	sweep := time.NewTicker(15 * time.Second)
 	defer sweep.Stop()
 
@@ -135,10 +164,15 @@ func (s *Service) browseLoop(ctx context.Context) {
 			if !ok {
 				return
 			}
-			s.handleEntry(entry, lastSeen)
+			s.handleEntry(entry)
+
+		case <-s.refreshBrowse:
+			// Kick a short one-shot browse in parallel with the long-running
+			// browser. Peers that answer re-emit EventPeerFound via handleEntry.
+			go s.oneShotBrowse(ctx)
 
 		case <-sweep.C:
-			s.sweepExpired(lastSeen)
+			s.sweepExpired()
 
 		case <-ctx.Done():
 			for _, p := range s.registry.All() {
@@ -153,7 +187,43 @@ func (s *Service) browseLoop(ctx context.Context) {
 	}
 }
 
-func (s *Service) handleEntry(entry *zeroconf.ServiceEntry, lastSeen map[string]time.Time) {
+// oneShotBrowse runs a short-lived mDNS browse to force rediscovery after the
+// user presses r. handleEntry is safe to call concurrently (lastSeen is mutexed;
+// registry is already thread-safe; PeerFound is idempotent in the TUI).
+func (s *Service) oneShotBrowse(ctx context.Context) {
+	resolver, err := zeroconf.NewResolver(
+		zeroconf.SelectIPTraffic(zeroconf.IPv4),
+		zeroconf.SelectIfaces(s.ifaces),
+	)
+	if err != nil {
+		slog.Warn("refresh browse: resolver failed", "err", err)
+		return
+	}
+
+	entries := make(chan *zeroconf.ServiceEntry, 64)
+	queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	go func() {
+		if err := resolver.Browse(queryCtx, "_localmesh._tcp", "local.", entries); err != nil {
+			slog.Debug("refresh browse ended", "err", err)
+		}
+	}()
+
+	for {
+		select {
+		case entry, ok := <-entries:
+			if !ok {
+				return
+			}
+			s.handleEntry(entry)
+		case <-queryCtx.Done():
+			return
+		}
+	}
+}
+
+func (s *Service) handleEntry(entry *zeroconf.ServiceEntry) {
 	txt := parseTXT(entry.Text)
 	id := txt["id"]
 	if id == "" || id == s.deviceID {
@@ -175,23 +245,40 @@ func (s *Service) handleEntry(entry *zeroconf.ServiceEntry, lastSeen map[string]
 
 	slog.Info("peer found", "id", id[:8], "host", peer.Hostname, "addr", peer.Addr())
 
-	lastSeen[id] = time.Now()
+	s.lastSeenMu.Lock()
+	s.lastSeen[id] = time.Now()
+	s.lastSeenMu.Unlock()
+
 	s.registry.Upsert(peer)
-	s.events <- Event{Kind: EventPeerFound, Peer: peer}
+	select {
+	case s.events <- Event{Kind: EventPeerFound, Peer: peer}:
+	default:
+		slog.Warn("discovery events channel full; dropping PeerFound", "id", id[:8])
+	}
 }
 
-func (s *Service) sweepExpired(lastSeen map[string]time.Time) {
+func (s *Service) sweepExpired() {
 	const expiry = 120 * time.Second
 	now := time.Now()
-	for id, t := range lastSeen {
+
+	s.lastSeenMu.Lock()
+	var expired []string
+	for id, t := range s.lastSeen {
 		if now.Sub(t) > expiry {
-			if peer, ok := s.registry.Get(id); ok {
-				s.registry.Remove(id)
-				delete(lastSeen, id)
-				select {
-				case s.events <- Event{Kind: EventPeerLost, Peer: peer}:
-				default:
-				}
+			expired = append(expired, id)
+		}
+	}
+	for _, id := range expired {
+		delete(s.lastSeen, id)
+	}
+	s.lastSeenMu.Unlock()
+
+	for _, id := range expired {
+		if peer, ok := s.registry.Get(id); ok {
+			s.registry.Remove(id)
+			select {
+			case s.events <- Event{Kind: EventPeerLost, Peer: peer}:
+			default:
 			}
 		}
 	}

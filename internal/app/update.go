@@ -9,6 +9,7 @@ import (
 	"github.com/alanwnuczko/local-mesh/internal/screens"
 	"github.com/alanwnuczko/local-mesh/internal/transfer"
 	"github.com/alanwnuczko/local-mesh/pkg/protocol"
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -47,15 +48,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Overlay != nil {
 			return m.handleOverlayKey(msg)
 		}
-		switch msg.String() {
-		case "ctrl+c":
+
+		// Global quit always works.
+		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
-		case "q":
-			if m.ActiveScreen == ScreenPeerList {
-				return m, tea.Quit
-			}
-		case "?":
+		}
+
+		// ? toggles the help overlay on every screen (spec §4 global keys).
+		// Must return here so the key is not also consumed by sub-models
+		// (e.g. bubbles/list's own ShowFullHelp binding).
+		if key.Matches(msg, GlobalKeys.Help) {
 			m.ShowHelp = !m.ShowHelp
+			return m, nil
+		}
+
+		// While help is open, capture all input: esc/? closes, q quits from
+		// the peer list, everything else is ignored so keys don't leak through.
+		if m.ShowHelp {
+			switch msg.String() {
+			case "esc":
+				m.ShowHelp = false
+			case "q":
+				if m.ActiveScreen == ScreenPeerList {
+					return m, tea.Quit
+				}
+				m.ShowHelp = false
+			}
+			return m, nil
+		}
+
+		if msg.String() == "q" && m.ActiveScreen == ScreenPeerList {
+			return m, tea.Quit
 		}
 
 	case PeerFoundMsg:
@@ -138,16 +161,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updatePeerList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "enter":
+		switch {
+		case msg.String() == "enter":
 			if peer, ok := m.PeerList.SelectedPeer(); ok {
 				m.SelectedPeer = peer
 				m.Picker.Reset()
 				m.ActiveScreen = ScreenPicker
 				return m, m.Picker.Init()
 			}
-		case "r":
-			return m, nil // zeroconf re-announces periodically
+		case key.Matches(msg, GlobalKeys.Refresh):
+			// Force-refresh: re-query mDNS and fire a UDP beacon (spec §4.1).
+			// OnRefresh only signals discovery channels — no Model access.
+			if m.OnRefresh != nil {
+				m.OnRefresh()
+			}
+			return m, nil
 		}
 	}
 
