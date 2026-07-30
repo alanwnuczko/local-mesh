@@ -154,4 +154,4 @@ See `pkg/protocol/` for implementation details.
 
 ## License
 
-MIT
+MIT - see [LICENSE](LICENSE)
