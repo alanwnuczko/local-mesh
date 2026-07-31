@@ -24,29 +24,7 @@ It relies on mDNS and a custom UDP fallback protocol for peer discovery. Transfe
 
 ## Installation
 
-Go 1.22 or newer is required to build from source.
-
-### Option 1: Install via Go
-
-```sh
-go install github.com/alanwnuczko/local-mesh/cmd/local-mesh@latest
-```
-
-Ensure your Go `bin` directory is in your `PATH`:
-- **Windows:** `%USERPROFILE%\go\bin`
-- **macOS / Linux:** `$HOME/go/bin`
-
-### Option 2: Build from Source
-
-```sh
-git clone https://github.com/alanwnuczko/local-mesh.git
-cd local-mesh
-go build -o local-mesh ./cmd/local-mesh
-```
-
-Move the resulting binary to a location in your `PATH`.
-
-### Option 3: Pre-compiled Binaries
+### Option 1: Pre-compiled Binaries
 
 Download the executable for your OS from the [GitHub Releases page](https://github.com/alanwnuczko/local-mesh/releases). To run the app from any terminal directory, you must add the folder containing the executable to your system's `PATH`.
 
@@ -63,6 +41,60 @@ Move the executable to `/usr/local/bin` using `sudo mv local-mesh /usr/local/bin
   <img src="assets/6.png" width="49%" alt="Ubuntu" />
   <img src="assets/7.png" width="49%" alt="Ubuntu" />
 </p>
+
+### Option 2: CLI Install (no GUI)
+
+Use this if you have no browser available (e.g. WSL, a headless server, or SSH). These commands always install the latest release.
+
+**Linux x86_64** (WSL, most servers)
+```sh
+curl -L https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Linux_x86_64.tar.gz | tar -xz
+sudo mv local-mesh /usr/local/bin/
+```
+
+**Linux arm64** (Raspberry Pi, ARM servers)
+```sh
+curl -L https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Linux_arm64.tar.gz | tar -xz
+sudo mv local-mesh /usr/local/bin/
+```
+
+**macOS Apple Silicon** (arm64)
+```sh
+curl -L https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Darwin_arm64.tar.gz | tar -xz
+sudo mv local-mesh /usr/local/bin/
+```
+
+**macOS Intel** (x86_64)
+```sh
+curl -L https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Darwin_x86_64.tar.gz | tar -xz
+sudo mv local-mesh /usr/local/bin/
+```
+
+After installation, verify it works by running `local-mesh` from any directory.
+
+### Option 3: Install via Go
+
+Go 1.22 or newer is required.
+
+```sh
+go install github.com/alanwnuczko/local-mesh/cmd/local-mesh@latest
+```
+
+Ensure your Go `bin` directory is in your `PATH`:
+- **Windows:** `%USERPROFILE%\go\bin`
+- **macOS / Linux:** `$HOME/go/bin`
+
+### Option 4: Build from Source
+
+Go 1.22 or newer is required.
+
+```sh
+git clone https://github.com/alanwnuczko/local-mesh.git
+cd local-mesh
+go build -o local-mesh ./cmd/local-mesh
+```
+
+Move the resulting binary to a location in your `PATH`.
 
 ## Usage
 
@@ -122,4 +154,4 @@ See `pkg/protocol/` for implementation details.
 
 ## License
 
-MIT
+MIT - see [LICENSE](LICENSE)
