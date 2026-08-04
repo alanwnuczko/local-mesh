@@ -9,12 +9,16 @@ import (
 // Server is the TCP listener for incoming transfers.
 // It is goroutine #3 in the spec's goroutine inventory.
 type Server struct {
-	listener net.Listener
-	decider  OfferDecider
-	progress chan<- ProgressEvent
-	done     chan<- DoneEvent
-	offers   chan<- OfferWithReply
+	listener  net.Listener
+	decider   OfferDecider
+	progress  chan<- ProgressEvent
+	done      chan<- DoneEvent
+	offers    chan<- OfferWithReply
+	// sem limits concurrent receive sessions (H-4: DoS prevention).
+	sem       chan struct{}
 }
+
+const maxConcurrentReceives = 5
 
 // NewServer creates a TCP listener bound to addr (use ":0" for OS-assigned port).
 func NewServer(addr string, offerCh chan<- OfferWithReply, progress chan<- ProgressEvent, done chan<- DoneEvent) (*Server, error) {
@@ -28,6 +32,7 @@ func NewServer(addr string, offerCh chan<- OfferWithReply, progress chan<- Progr
 		progress: progress,
 		done:     done,
 		offers:   offerCh,
+		sem:      make(chan struct{}, maxConcurrentReceives),
 	}, nil
 }
 
@@ -62,8 +67,17 @@ func (s *Server) Serve(ctx context.Context) {
 				return
 			}
 		}
+		// H-4: acquire semaphore slot; drop connection if at capacity.
+		select {
+		case s.sem <- struct{}{}:
+		default:
+			slog.Warn("server: max concurrent receives reached, dropping connection")
+			conn.Close()
+			continue
+		}
 		// Per-connection receive goroutine (spec §3.1 #4).
 		go func(c net.Conn) {
+			defer func() { <-s.sem }()
 			defer c.Close()
 			RunReceive(RecvConfig{
 				Ctx:      ctx,

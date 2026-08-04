@@ -7,4 +7,5 @@ if %ERRORLEVEL% EQU 0 (
 ) else (
     echo.
     echo Build FAILED. Check errors above.
+    exit /b 1
 )

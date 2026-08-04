@@ -274,6 +274,16 @@ func (s *Service) sweepExpired() {
 	s.lastSeenMu.Unlock()
 
 	for _, id := range expired {
+		// H-5: re-verify under lock that the peer hasn't been refreshed between
+		// the sweep scan and this removal. A concurrent handleEntry/handleFallbackPeer
+		// could have updated lastSeen after we released the lock above.
+		s.lastSeenMu.Lock()
+		_, stillExpired := s.lastSeen[id]
+		s.lastSeenMu.Unlock()
+		if stillExpired {
+			// Peer was re-added between the two lock acquisitions; skip.
+			continue
+		}
 		if peer, ok := s.registry.Get(id); ok {
 			s.registry.Remove(id)
 			select {
