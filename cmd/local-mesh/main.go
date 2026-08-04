@@ -14,17 +14,18 @@ import (
 
 	"github.com/alanwnuczko/local-mesh/internal/app"
 	"github.com/alanwnuczko/local-mesh/internal/bus"
+	"github.com/alanwnuczko/local-mesh/internal/config"
 	"github.com/alanwnuczko/local-mesh/internal/discovery"
 	"github.com/alanwnuczko/local-mesh/internal/transfer"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	// Log to a file so output does not interfere with the TUI.
-	exePath, exeErr := os.Executable()
+	// H-8: write log to config dir so it works when the binary is installed in
+	// a system directory (e.g. /usr/local/bin) where the user has no write access.
 	logPath := "local-mesh.log" // fallback: current dir
-	if exeErr == nil {
-		logPath = filepath.Join(filepath.Dir(exePath), "local-mesh.log")
+	if cfgDir, err := config.ConfigDir(); err == nil {
+		logPath = filepath.Join(cfgDir, "local-mesh.log")
 	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
@@ -111,10 +112,13 @@ func main() {
 	// then discovery's browse context was already cancelled too.
 	go server.Serve(ctx)
 
+	// H-6: close sendRegCh after p.Run() returns so the range goroutine below
+	// can exit cleanly instead of blocking forever.
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "bubbletea: %v\n", err)
 		os.Exit(1)
 	}
+	close(sendRegCh)
 }
 
 func ensureWindowsFirewallRule() {

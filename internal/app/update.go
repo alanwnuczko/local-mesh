@@ -44,14 +44,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Overlay captures all key input while active.
-		if m.Overlay != nil {
-			return m.handleOverlayKey(msg)
-		}
-
-		// Global quit always works.
+		// ctrl+c always quits, even when the overlay is active (H-10).
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+		// Overlay captures all other key input while active.
+		if m.Overlay != nil {
+			return m.handleOverlayKey(msg)
 		}
 
 		// ? toggles the help overlay on every screen (spec §4 global keys).
@@ -90,8 +89,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case IncomingOfferMsg:
-		if m.ReceiveBusy {
-			// Already transferring - auto-reject with ERR_BUSY (§4.5, §6).
+		// H-1: reject if already receiving OR if overlay is already showing.
+		// Without the Overlay check the first offer's Reply channel is abandoned,
+		// leaking the goroutine and the TCP connection.
+		if m.ReceiveBusy || m.Overlay != nil {
+			// Already transferring or showing overlay - auto-reject with ERR_BUSY (§4.5, §6).
 			return m, sendDecisionCmd(msg.Reply, protocol.DecisionMessage{
 				TransferID: msg.Offer.TransferID,
 				Accepted:   false,
@@ -278,9 +280,12 @@ func (m Model) updateProgress(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "c":
+			// H-2: reset ReceiveBusy so future incoming transfers are not
+			// permanently blocked after the user dismisses the progress screen.
 			m.ActiveScreen = ScreenPeerList
 			m.Progress = nil
 			m.Activity = screens.ActivityIdle
+			m.ReceiveBusy = false
 			return m, nil
 		case "enter", "esc":
 			if m.Progress != nil && m.Progress.IsDone() {

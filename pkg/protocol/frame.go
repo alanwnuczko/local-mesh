@@ -15,18 +15,16 @@ import (
 // The write is performed as a single io.Writer call via an assembled header
 // slice followed by the payload, keeping writes atomic at the framing level.
 func WriteFrame(w io.Writer, frameType uint8, payload []byte) error {
-	// Build the 5-byte header: 1 type + 4 length.
-	var header [5]byte
-	header[0] = frameType
-	binary.BigEndian.PutUint32(header[1:5], uint32(len(payload)))
+	// Combine header and payload into a single buffer so the Write is atomic.
+	// Two separate Write calls on a TCP connection can interleave with concurrent
+	// writes from other goroutines (e.g. sendErrorFrame during an active transfer).
+	buf := make([]byte, 5+len(payload))
+	buf[0] = frameType
+	binary.BigEndian.PutUint32(buf[1:5], uint32(len(payload)))
+	copy(buf[5:], payload)
 
-	if _, err := w.Write(header[:]); err != nil {
-		return fmt.Errorf("write frame header: %w", err)
-	}
-	if len(payload) > 0 {
-		if _, err := w.Write(payload); err != nil {
-			return fmt.Errorf("write frame payload: %w", err)
-		}
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("write frame: %w", err)
 	}
 	return nil
 }
