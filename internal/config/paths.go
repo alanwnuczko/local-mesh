@@ -96,7 +96,8 @@ func DownloadsDir() (string, error) {
 // extension (or at the end for directories). Never overwrites an existing entry.
 func UniqueDestPath(dir, name string) string {
 	candidate := filepath.Join(dir, name)
-	if _, err := os.Stat(candidate); os.IsNotExist(err) {
+	if _, err := os.Stat(candidate); err != nil {
+		// Any error (including ErrNotExist) means the path is available.
 		return candidate
 	}
 
@@ -109,7 +110,8 @@ func UniqueDestPath(dir, name string) string {
 			candidate = filepath.Join(dir, base+"("+itoa(n)+")")
 		}
 		candidate += ext
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+		if _, err := os.Stat(candidate); err != nil {
+			// Any error (including ErrNotExist) means the path is available.
 			return candidate
 		}
 	}

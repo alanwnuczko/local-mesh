@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/alanwnuczko/local-mesh/internal/config"
@@ -103,14 +104,13 @@ func RunReceive(cfg RecvConfig) {
 	// Writer goroutine: reads FrameChunk / FrameComplete frames, writes raw
 	// bytes into the pipe, closes when FrameComplete is received.
 	var (
-		bytesSent  int64
-		frameErr   error
+		frameErr  error
+		localRecvd atomic.Int64 // C-2: count bytes locally, not from sender's claim
 	)
 	doneCh := make(chan struct{})
 
 	go func() {
 		defer close(doneCh)
-		var recvd int64
 		lastEmit := time.Now()
 		lastBytes := int64(0)
 
@@ -124,10 +124,12 @@ func RunReceive(cfg RecvConfig) {
 			switch ftype {
 			case protocol.FrameChunk:
 				if _, err := pw.Write(payload); err != nil {
+					// C-2 / M-4: close the pipe so the reader doesn't hang.
+					pw.CloseWithError(err)
 					frameErr = err
 					return
 				}
-				recvd += int64(len(payload))
+				recvd := localRecvd.Add(int64(len(payload)))
 
 				if time.Since(lastEmit) >= 100*time.Millisecond {
 					elapsed := time.Since(lastEmit).Seconds()
@@ -144,13 +146,13 @@ func RunReceive(cfg RecvConfig) {
 				}
 
 			case protocol.FrameComplete:
-				cm, err := protocol.UnmarshalComplete(payload)
+				_, err := protocol.UnmarshalComplete(payload)
 				if err != nil {
 					pw.CloseWithError(err)
 					frameErr = err
 					return
 				}
-				bytesSent = cm.BytesSent
+				// C-2: ignore sender's self-reported BytesSent; use localRecvd instead.
 				pw.Close()
 				return
 
@@ -169,7 +171,8 @@ func RunReceive(cfg RecvConfig) {
 	}()
 
 	// Phase 4: consume the pipe - either write to file or untar.
-	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseVerifying, BytesTotal: offer.Size}
+	// C-4: do NOT emit PhaseVerifying here; only emit it after the goroutine
+	// finishes and all bytes have been written to disk.
 
 	downloadsDir, err := config.DownloadsDir()
 	if err != nil {
@@ -253,13 +256,15 @@ func RunReceive(cfg RecvConfig) {
 	}
 
 	// Phase 5: verify checksum + byte count.
-	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseVerifying, BytesDone: bytesSent, BytesTotal: offer.Size}
+	// C-4: PhaseVerifying is emitted here, after all data has been read.
+	// C-2: Use locally counted bytes, not sender's self-reported BytesSent.
+	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseVerifying, BytesDone: localRecvd.Load(), BytesTotal: offer.Size}
 
 	gotChecksum := hex.EncodeToString(hasher.Sum(nil))
-	if gotChecksum != offer.Checksum || bytesSent != offer.Size {
+	if gotChecksum != offer.Checksum || localRecvd.Load() != offer.Size {
 		detail := fmt.Sprintf("checksum mismatch: got %s want %s", gotChecksum, offer.Checksum)
-		if bytesSent != offer.Size {
-			detail = fmt.Sprintf("size mismatch: got %d want %d", bytesSent, offer.Size)
+		if localRecvd.Load() != offer.Size {
+			detail = fmt.Sprintf("size mismatch: received %d want %d", localRecvd.Load(), offer.Size)
 		}
 		sendErrorFrame(cfg.Conn, transferID, protocol.ErrChecksum, detail)
 		// Remove the partial/wrong file.
@@ -283,7 +288,7 @@ func RunReceive(cfg RecvConfig) {
 		return
 	}
 
-	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseDone, BytesDone: bytesSent, BytesTotal: offer.Size}
+	cfg.Progress <- ProgressEvent{TransferID: transferID, Phase: PhaseDone, BytesDone: localRecvd.Load(), BytesTotal: offer.Size}
 }
 
 // sendErrorFrame is a best-effort helper to notify the peer of an error.
