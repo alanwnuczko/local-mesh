@@ -32,16 +32,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Footer != nil {
 			m.Footer.SetWidth(msg.Width)
 		}
-		// Propagate to all sub-models.
-		m.PeerList, _ = m.PeerList.Update(msg)
-		m.Picker, _ = m.Picker.Update(msg)
+		// M-11: collect returned tea.Cmd values from child updates so that
+		// in-flight commands (spinner ticks, directory reads) are not dropped
+		// when a resize arrives.
+		var sizeCmds []tea.Cmd
+		var peerCmd, pickerCmd, confirmCmd, progressCmd tea.Cmd
+		m.PeerList, peerCmd = m.PeerList.Update(msg)
+		m.Picker, pickerCmd = m.Picker.Update(msg)
 		if m.Confirm != nil {
-			m.Confirm, _ = m.Confirm.Update(msg)
+			m.Confirm, confirmCmd = m.Confirm.Update(msg)
 		}
 		if m.Progress != nil {
-			m.Progress, _ = m.Progress.Update(msg)
+			m.Progress, progressCmd = m.Progress.Update(msg)
 		}
-		return m, nil
+		sizeCmds = append(sizeCmds, peerCmd, pickerCmd, confirmCmd, progressCmd)
+		return m, tea.Batch(sizeCmds...)
 
 	case tea.KeyMsg:
 		// ctrl+c always quits, even when the overlay is active (H-10).

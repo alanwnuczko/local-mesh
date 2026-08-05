@@ -36,10 +36,18 @@ func (s *Service) fallbackListenLoop(ctx context.Context) {
 		slog.Warn("fallback listener failed to bind", "err", err)
 		return
 	}
-	defer conn.Close()
+	// M-2: use a derived context whose cancel is called on return, so the
+	// watcher goroutine exits immediately when this function returns for any
+	// reason (not just when the parent ctx is cancelled).
+	innerCtx, innerCancel := context.WithCancel(ctx)
+	// M-3: single-owner close — conn.Close is called only in the watcher,
+	// which is triggered by innerCancel (deferred below). The previous code
+	// had both a defer conn.Close() and a watcher conn.Close() running
+	// concurrently — a double-close.
+	defer innerCancel()
 
 	go func() {
-		<-ctx.Done()
+		<-innerCtx.Done()
 		conn.Close()
 	}()
 

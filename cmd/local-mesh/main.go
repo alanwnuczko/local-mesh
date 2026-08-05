@@ -159,7 +159,9 @@ func ensureWindowsFirewallRule() {
 				"name=local-mesh TCP",
 				"protocol=TCP", "dir=in",
 				"action=allow", "profile=any",
-				"program=" + exePath,
+				// M-12: pre-quote the path so netsh can parse paths with spaces
+				// correctly. netsh expects: program="C:\path with spaces\bin.exe"
+				`program="` + exePath + `"`,
 			},
 		},
 	}

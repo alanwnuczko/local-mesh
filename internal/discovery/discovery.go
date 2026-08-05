@@ -218,6 +218,12 @@ func (s *Service) oneShotBrowse(ctx context.Context) {
 			}
 			s.handleEntry(entry)
 		case <-queryCtx.Done():
+			// M-1: drain entries until zeroconf closes the channel so that
+			// any zeroconf goroutine blocked on a channel send can exit.
+			go func() {
+				for range entries {
+				}
+			}()
 			return
 		}
 	}
