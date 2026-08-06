@@ -13,6 +13,8 @@ type Picker struct {
 	fp       filepicker.Model
 	selected string
 	isDir    bool
+	termW    int
+	termH    int
 	width    int
 	height   int
 }
@@ -54,6 +56,8 @@ func (p *Picker) Update(msg tea.Msg) (*Picker, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		p.width = msg.Width
 		p.height = msg.Height
+		p.termW = msg.Width
+		p.termH = msg.Height
 		p.fp.Height = msg.Height - 6
 
 	case tea.KeyMsg:
@@ -87,5 +91,7 @@ func (p *Picker) Update(msg tea.Msg) (*Picker, tea.Cmd) {
 func (p *Picker) View() string {
 	header := ui.TitleStyle.Render("Select file or folder") + "\n"
 	help := ui.HelpStyle.Render("  enter select file  s select current folder  esc back  q quit")
-	return header + p.fp.View() + "\n" + help
+	content := header + p.fp.View() + "\n" + help
+	// L-7: wrap in panel for a consistent rounded border like all other screens.
+	return wrapInPanel(content, p.termW, p.termH)
 }

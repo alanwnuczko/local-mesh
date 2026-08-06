@@ -51,33 +51,41 @@ func (p Peer) Addr() string {
 	return fmt.Sprintf("[%s]:%d", p.Addrs[0].String(), p.Port)
 }
 
+// localNetsCache caches the result of localIPv4Nets so that Peer.Addr()
+// doesn't enumerate all interfaces on every TUI render frame (L-2).
+var (
+	localNetsOnce  sync.Once
+	localNetsCached []*net.IPNet
+)
+
 // localIPv4Nets returns the IPv4 networks configured on this machine.
-// Used by Peer.Addr to prefer a peer IP on a shared subnet.
+// The result is cached after the first call.
 func localIPv4Nets() []*net.IPNet {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var nets []*net.IPNet
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
+	localNetsOnce.Do(func() {
+		ifaces, err := net.Interfaces()
 		if err != nil {
-			continue
+			return
 		}
-		for _, a := range addrs {
-			ipnet, ok := a.(*net.IPNet)
-			if !ok {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 				continue
 			}
-			if ip4 := ipnet.IP.To4(); ip4 != nil && !ip4.IsLinkLocalUnicast() {
-				nets = append(nets, &net.IPNet{IP: ip4.Mask(ipnet.Mask), Mask: ipnet.Mask})
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				ipnet, ok := a.(*net.IPNet)
+				if !ok {
+					continue
+				}
+				if ip4 := ipnet.IP.To4(); ip4 != nil && !ip4.IsLinkLocalUnicast() {
+					localNetsCached = append(localNetsCached, &net.IPNet{IP: ip4.Mask(ipnet.Mask), Mask: ipnet.Mask})
+				}
 			}
 		}
-	}
-	return nets
+	})
+	return localNetsCached
 }
 
 // ShortID returns the first 8 characters of the device ID for display.

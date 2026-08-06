@@ -36,10 +36,18 @@ func (s *Service) fallbackListenLoop(ctx context.Context) {
 		slog.Warn("fallback listener failed to bind", "err", err)
 		return
 	}
-	defer conn.Close()
+	// M-2: use a derived context whose cancel is called on return, so the
+	// watcher goroutine exits immediately when this function returns for any
+	// reason (not just when the parent ctx is cancelled).
+	innerCtx, innerCancel := context.WithCancel(ctx)
+	// M-3: single-owner close — conn.Close is called only in the watcher,
+	// which is triggered by innerCancel (deferred below). The previous code
+	// had both a defer conn.Close() and a watcher conn.Close() running
+	// concurrently — a double-close.
+	defer innerCancel()
 
 	go func() {
-		<-ctx.Done()
+		<-innerCtx.Done()
 		conn.Close()
 	}()
 
@@ -91,10 +99,19 @@ func (s *Service) fallbackSendLoop(ctx context.Context) {
 			if ip4 == nil {
 				continue
 			}
+			// L-1: Go can return 16-byte masks for IPv4-mapped IPv6 addresses.
+			// Normalise to a 4-byte mask before indexing.
+			mask4 := ipnet.Mask
+			if len(mask4) == 16 {
+				mask4 = mask4[12:]
+			}
+			if len(mask4) != 4 {
+				continue
+			}
 			// Calculate broadcast address: IP | ^Mask
 			bcast := make(net.IP, 4)
 			for i := 0; i < 4; i++ {
-				bcast[i] = ip4[i] | ^ipnet.Mask[i]
+				bcast[i] = ip4[i] | ^mask4[i]
 			}
 			
 			conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{

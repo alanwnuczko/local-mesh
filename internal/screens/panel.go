@@ -43,8 +43,9 @@ func wrapInPanel(content string, termW, _ int) string {
 	if panelW > 110 {
 		panelW = 110
 	}
-	if panelW < 10 {
-		panelW = 10
+	// M-8: unified minimum with panelInnerSize — was 10, now 14.
+	if panelW < 14 {
+		panelW = 14
 	}
 	// Width() in lipgloss specifies the width excluding borders.
 	// To make the total panel exactly panelW chars wide, we must pass panelW - 2.

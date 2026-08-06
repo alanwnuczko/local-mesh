@@ -3,7 +3,6 @@
 package transfer
 
 import (
-	"net"
 	"time"
 )
 
@@ -66,29 +65,5 @@ const (
 	DirRecv
 )
 
-// session holds shared helpers for a single transfer session.
-type session struct {
-	conn       net.Conn
-	transferID string
-	direction  Direction
-	progress   chan<- ProgressEvent
-
-	// throttle state
-	lastProgress time.Time
-	bytesSinceLastProgress int64
-}
-
-// shouldEmitProgress returns true if enough time has elapsed since the last
-// progress event. Coalesces to at most one event per ProgressInterval ms.
-func (s *session) shouldEmitProgress() bool {
-	return time.Since(s.lastProgress) >= 100*time.Millisecond
-}
-
-func (s *session) markProgress(n int64) {
-	s.bytesSinceLastProgress += n
-}
-
-func (s *session) resetProgressThrottle() {
-	s.lastProgress = time.Now()
-	s.bytesSinceLastProgress = 0
-}
+// progressInterval is the minimum time between consecutive progress events.
+const progressInterval = 100 * time.Millisecond

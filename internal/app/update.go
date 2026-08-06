@@ -32,16 +32,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Footer != nil {
 			m.Footer.SetWidth(msg.Width)
 		}
-		// Propagate to all sub-models.
-		m.PeerList, _ = m.PeerList.Update(msg)
-		m.Picker, _ = m.Picker.Update(msg)
+		// M-11: collect returned tea.Cmd values from child updates so that
+		// in-flight commands (spinner ticks, directory reads) are not dropped
+		// when a resize arrives.
+		var sizeCmds []tea.Cmd
+		var peerCmd, pickerCmd, confirmCmd, progressCmd tea.Cmd
+		m.PeerList, peerCmd = m.PeerList.Update(msg)
+		m.Picker, pickerCmd = m.Picker.Update(msg)
 		if m.Confirm != nil {
-			m.Confirm, _ = m.Confirm.Update(msg)
+			m.Confirm, confirmCmd = m.Confirm.Update(msg)
 		}
 		if m.Progress != nil {
-			m.Progress, _ = m.Progress.Update(msg)
+			m.Progress, progressCmd = m.Progress.Update(msg)
 		}
-		return m, nil
+		sizeCmds = append(sizeCmds, peerCmd, pickerCmd, confirmCmd, progressCmd)
+		return m, tea.Batch(sizeCmds...)
 
 	case tea.KeyMsg:
 		// ctrl+c always quits, even when the overlay is active (H-10).
@@ -104,7 +109,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SizeComputedMsg:
-		if m.Confirm != nil {
+		// L-8: discard results from a stale async computation (user re-selected
+		// a different file before this one finished).
+		if m.Confirm != nil && msg.Path == m.SelectedPath {
 			m.Confirm.SetComputed(msg.Size, msg.Checksum, msg.Err)
 		}
 		return m, nil
@@ -137,6 +144,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TransferErrorMsg:
+		// L-10: reset Activity so the footer doesn't permanently show
+		// "transferring" after an immediate StartSend failure.
+		m.Activity = screens.ActivityIdle
 		if m.Progress != nil {
 			m.Progress.SetDone(msg.Err)
 		}
@@ -222,6 +232,9 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "N":
 			m.ActiveScreen = ScreenPicker
 			return m, nil
+		case "q":
+			// L-9: q quits from the confirm screen (help text advertises this).
+			return m, tea.Quit
 		case "y", "enter":
 			if m.Confirm != nil && m.Confirm.IsReady() {
 				return m.startSend()
@@ -342,10 +355,11 @@ func sendDecisionCmd(reply chan<- protocol.DecisionMessage, dec protocol.Decisio
 }
 
 // computeSizeCmd kicks off the size+checksum pre-pass in a Cmd goroutine.
+// L-8: path is embedded in the result so the handler can discard stale results.
 func computeSizeCmd(path string, isDir bool) tea.Cmd {
 	return func() tea.Msg {
 		size, checksum, err := computePayloadMeta(path, isDir)
-		return SizeComputedMsg{Size: size, Checksum: checksum, Err: err}
+		return SizeComputedMsg{Path: path, Size: size, Checksum: checksum, Err: err}
 	}
 }
 

@@ -124,7 +124,10 @@ local-mesh
 - **Received Files:** 
   - Windows: `%USERPROFILE%\Downloads\local-mesh`
   - macOS / Linux: `~/Downloads/local-mesh`
-- **Application Logs:** Written to `local-mesh.log` in the current working directory.
+- **Application Logs:** Written to `local-mesh.log` in the config directory:
+  - Windows: `%APPDATA%\local-mesh\local-mesh.log`
+  - macOS: `~/Library/Application Support/local-mesh/local-mesh.log`
+  - Linux: `~/.config/local-mesh/local-mesh.log`
 - **Device ID Configuration:** 
   - Windows: `%APPDATA%\local-mesh`
   - macOS: `~/Library/Application Support/local-mesh`
