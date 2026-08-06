@@ -75,6 +75,7 @@ type StartSendMsg struct {
 // SizeComputedMsg is sent when the pre-pass (size + checksum) finishes on the
 // confirm screen, so the UI can display the exact values.
 type SizeComputedMsg struct {
+	Path     string // the file/dir this result belongs to
 	Size     int64
 	Checksum string
 	Err      error

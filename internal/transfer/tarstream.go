@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,9 +18,17 @@ func TarFolder(srcDir string, w io.Writer) error {
 	base := filepath.Base(srcDir)
 	tw := tar.NewWriter(w)
 
-	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	// P-5: use WalkDir so we receive d.Type() before stat-ing, which lets us
+	// skip symlinks without following them. filepath.Walk follows symlinks by
+	// default and would include whatever they point to (e.g. /etc/passwd).
+	err := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+
+		// Skip symlinks entirely.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
 		}
 
 		// Compute the path inside the tar relative to srcDir's parent.
@@ -30,6 +39,11 @@ func TarFolder(srcDir string, w io.Writer) error {
 		// Normalise separator to forward slash for portability.
 		rel = filepath.ToSlash(rel)
 		_ = base // used via rel which already includes the folder name
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
 
 		hdr, err := tar.FileInfoHeader(info, "")
 		if err != nil {

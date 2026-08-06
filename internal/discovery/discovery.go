@@ -249,7 +249,7 @@ func (s *Service) handleEntry(entry *zeroconf.ServiceEntry) {
 		peer.Hostname = entry.HostName
 	}
 
-	slog.Info("peer found", "id", id[:8], "host", peer.Hostname, "addr", peer.Addr())
+	slog.Info("peer found", "id", peer.ShortID(), "host", peer.Hostname, "addr", peer.Addr())
 
 	s.lastSeenMu.Lock()
 	s.lastSeen[id] = time.Now()
@@ -259,7 +259,7 @@ func (s *Service) handleEntry(entry *zeroconf.ServiceEntry) {
 	select {
 	case s.events <- Event{Kind: EventPeerFound, Peer: peer}:
 	default:
-		slog.Warn("discovery events channel full; dropping PeerFound", "id", id[:8])
+		slog.Warn("discovery events channel full; dropping PeerFound", "id", peer.ShortID())
 	}
 }
 

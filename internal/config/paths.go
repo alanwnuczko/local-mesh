@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 )
 
 // ConfigDir returns the path to the local-mesh configuration directory,
@@ -105,11 +106,8 @@ func UniqueDestPath(dir, name string) string {
 	base := name[:len(name)-len(ext)]
 
 	for n := 1; ; n++ {
-		candidate = filepath.Join(dir, base+"("+string(rune('0'+n%10))+")")
-		if n >= 10 {
-			candidate = filepath.Join(dir, base+"("+itoa(n)+")")
-		}
-		candidate += ext
+		// L-6: use strconv.Itoa for all values instead of the fragile n%10 trick.
+		candidate = filepath.Join(dir, base+"("+strconv.Itoa(n)+")"+ext)
 		if _, err := os.Stat(candidate); err != nil {
 			// Any error (including ErrNotExist) means the path is available.
 			return candidate
@@ -117,19 +115,5 @@ func UniqueDestPath(dir, name string) string {
 	}
 }
 
-// itoa is a minimal integer-to-string helper to avoid importing strconv.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	buf := make([]byte, 0, 10)
-	for n > 0 {
-		buf = append(buf, byte('0'+n%10))
-		n /= 10
-	}
-	// reverse
-	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
-		buf[i], buf[j] = buf[j], buf[i]
-	}
-	return string(buf)
-}
+
+

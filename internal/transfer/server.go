@@ -79,6 +79,9 @@ func (s *Server) Serve(ctx context.Context) {
 		go func(c net.Conn) {
 			defer func() { <-s.sem }()
 			defer c.Close()
+			// P-2: set an initial read deadline so a peer that crashes without
+			// sending FIN is detected within idleTimeout rather than 2+ hours.
+			setIdleDeadline(c)
 			RunReceive(RecvConfig{
 				Ctx:      ctx,
 				Conn:     c,
