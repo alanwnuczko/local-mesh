@@ -86,8 +86,8 @@ func (s *Service) fallbackListenLoop(ctx context.Context) {
 }
 
 func (s *Service) fallbackSendLoop(ctx context.Context) {
-	// Find all subnet broadcast addresses for our selected interfaces.
-	var conns []*net.UDPConn
+	// Collect all subnet broadcast addresses from selected LAN interfaces.
+	var targets []*net.UDPAddr
 	for _, iface := range s.ifaces {
 		addrs, _ := iface.Addrs()
 		for _, a := range addrs {
@@ -113,27 +113,24 @@ func (s *Service) fallbackSendLoop(ctx context.Context) {
 			for i := 0; i < 4; i++ {
 				bcast[i] = ip4[i] | ^mask4[i]
 			}
-			
-			conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{
-				IP:   bcast,
-				Port: fallbackPort,
-			})
-			if err == nil {
-				conns = append(conns, conn)
-			}
+			targets = append(targets, &net.UDPAddr{IP: bcast, Port: fallbackPort})
+			slog.Debug("fallback: will broadcast to subnet", "addr", bcast, "iface", iface.Name)
 		}
 	}
+	// Always include the global limited broadcast as a final fallback.
+	targets = append(targets, &net.UDPAddr{IP: net.IPv4bcast, Port: fallbackPort})
 
-	// Also add the global broadcast just in case
-	if globalConn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4bcast, Port: fallbackPort}); err == nil {
-		conns = append(conns, globalConn)
+	// Create a single UDP socket with SO_BROADCAST enabled.
+	// Without SO_BROADCAST both Linux (EACCES) and Windows (WSAEACCES) silently
+	// reject sends to broadcast addresses. The previous net.DialUDP approach
+	// never set SO_BROADCAST, so every c.Write(data) failed silently, making
+	// UDP-based peer discovery completely non-functional on all platforms.
+	conn, err := newBroadcastSender()
+	if err != nil {
+		slog.Warn("fallback: UDP broadcast discovery disabled (cannot create SO_BROADCAST socket)", "err", err)
+		return
 	}
-
-	defer func() {
-		for _, c := range conns {
-			c.Close()
-		}
-	}()
+	defer conn.Close()
 
 	beacon := fallbackBeacon{
 		ID:       s.deviceID,
@@ -149,8 +146,10 @@ func (s *Service) fallbackSendLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	sendAll := func() {
-		for _, c := range conns {
-			c.Write(data)
+		for _, target := range targets {
+			if _, err := conn.WriteTo(data, target); err != nil {
+				slog.Debug("fallback: broadcast send failed", "target", target.IP, "err", err)
+			}
 		}
 	}
 
