@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/alanwnuczko/local-mesh/internal/config"
 	"github.com/alanwnuczko/local-mesh/pkg/protocol"
 )
 
@@ -42,7 +44,7 @@ func TestContextCancelUnblocksDecider(t *testing.T) {
 		RunReceive(RecvConfig{
 			Ctx:      ctx,
 			Conn:     receiverConn,
-			Decider:  ChannelDecider(offerCh),
+			Decider:  ChannelDecider(offerCh, nil),
 			Progress: progress,
 			Done:     done,
 		})
@@ -147,7 +149,7 @@ func TestSlowDecisionNoRST(t *testing.T) {
 		RunReceive(RecvConfig{
 			Ctx:      ctx,
 			Conn:     receiverConn,
-			Decider:  ChannelDecider(offerCh),
+			Decider:  ChannelDecider(offerCh, nil),
 			Progress: progress,
 			Done:     done,
 		})
@@ -213,4 +215,79 @@ func TestSlowDecisionNoRST(t *testing.T) {
 	// Drain the reply channel to avoid a goroutine leak in the test itself.
 	// (The 300ms goroutine has already sent on it.)
 	_ = bytes.Compare(nil, nil) // suppress unused import if needed
+}
+
+func TestChecksumMismatchDoesNotCommit(t *testing.T) {
+	dir := t.TempDir()
+	config.UseDownloadsDir(dir)
+	t.Cleanup(func() { config.UseDownloadsDir("") })
+
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	done := make(chan DoneEvent, 1)
+	go RunReceive(RecvConfig{
+		Ctx:      context.Background(),
+		Conn:     b,
+		Decider:  AutoAcceptDecider,
+		Progress: make(chan ProgressEvent, 16),
+		Done:     done,
+	})
+
+	offer := protocol.OfferMessage{
+		Version:    protocol.ProtocolVersion,
+		SenderID:   "s",
+		SenderHost: "h",
+		Name:       "nope.txt",
+		Size:       4,
+		Checksum:   "0000000000000000000000000000000000000000000000000000000000000000",
+		TransferID: "bad-sum",
+	}
+	payload, _ := protocol.MarshalOffer(offer)
+	if err := protocol.WriteFrame(a, protocol.FrameOffer, payload); err != nil {
+		t.Fatal(err)
+	}
+	ft, _, err := protocol.ReadFrame(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ft != protocol.FrameDecision {
+		t.Fatalf("ft=0x%02x", ft)
+	}
+	if err := protocol.WriteFrame(a, protocol.FrameChunk, []byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	comp, _ := protocol.MarshalComplete(protocol.CompleteMessage{TransferID: "bad-sum", BytesSent: 4})
+	if err := protocol.WriteFrame(a, protocol.FrameComplete, comp); err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		for {
+			if _, _, err := protocol.ReadFrame(a); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case ev := <-done:
+		if ev.Err == nil {
+			t.Fatal("expected checksum error")
+		}
+		if ev.SavedPath != "" {
+			t.Fatalf("committed %q on checksum failure", ev.SavedPath)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		t.Errorf("leftover after checksum failure: %s", e.Name())
+	}
 }

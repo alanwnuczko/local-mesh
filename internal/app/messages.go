@@ -35,6 +35,8 @@ type IncomingOfferMsg struct {
 	// Reply is the channel the receive goroutine is blocked on. The UI sends
 	// a DecisionMessage on it (via a tea.Cmd) to unblock the goroutine.
 	Reply chan<- protocol.DecisionMessage
+	// Handle aborts the receive session (close + ERR_ABORT) if the user cancels.
+	Handle *transfer.Handle
 }
 
 // SendProgressMsg carries a progress snapshot from the active send goroutine.
@@ -78,5 +80,6 @@ type SizeComputedMsg struct {
 	Path     string // the file/dir this result belongs to
 	Size     int64
 	Checksum string
+	Plan     *transfer.FolderPlan // non-nil for directory selections
 	Err      error
 }

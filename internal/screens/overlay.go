@@ -77,7 +77,14 @@ func RenderOverlay(base string, overlay *OverlayState, width, height int) string
 		result = append(result, boxLines[boxIdx])
 	}
 
-	return strings.Join(result, "\n")
+	out := strings.Join(result, "\n")
+	if height > 0 {
+		lines := strings.Split(out, "\n")
+		if len(lines) > height {
+			out = strings.Join(lines[:height], "\n")
+		}
+	}
+	return out
 }
 
 func renderOverlayContent(o *OverlayState) string {

@@ -17,17 +17,46 @@ import (
 func (m Model) View() string {
 	base := m.renderBase()
 
+	// Overlays are composited onto the panel only; the footer is appended
+	// after so it cannot push the panel's top border off-screen.
+	panelH := m.Height - screens.FooterLines
+	if panelH < 1 {
+		panelH = m.Height
+	}
+
 	if m.Overlay != nil {
-		base = screens.RenderOverlay(base, m.Overlay, m.Width, m.Height)
+		base = screens.RenderOverlay(base, m.Overlay, m.Width, panelH)
 	} else if m.ShowHelp {
-		base = renderHelpOverlay(base, m.Width, m.Height)
+		base = renderHelpOverlay(base, m.Width, panelH)
 	}
 
 	if m.Footer != nil {
 		base += "\n" + m.Footer.View(m.Activity)
 	}
 
-	return base
+	return clampView(base, m.Width, m.Height)
+}
+
+// clampView keeps the view inside the terminal: at most height rows, and no
+// row occupying the last column (Unix PTYs wrap that cell and scroll).
+func clampView(s string, width, height int) string {
+	lines := strings.Split(s, "\n")
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
+	}
+	maxW := width - 1
+	if width <= 1 {
+		maxW = width
+	}
+	if maxW > 0 {
+		clip := lipgloss.NewStyle().MaxWidth(maxW).Inline(true)
+		for i, line := range lines {
+			if lipgloss.Width(line) > maxW {
+				lines[i] = clip.Render(line)
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderHelpOverlay draws the full keybinding help panel over a dimmed base.
@@ -93,7 +122,14 @@ func renderHelpOverlay(base string, width, height int) string {
 		}
 		result = append(result, boxLines[boxIdx])
 	}
-	return strings.Join(result, "\n")
+	out := strings.Join(result, "\n")
+	if height > 0 {
+		lines := strings.Split(out, "\n")
+		if len(lines) > height {
+			out = strings.Join(lines[:height], "\n")
+		}
+	}
+	return out
 }
 
 func (m Model) renderBase() string {
