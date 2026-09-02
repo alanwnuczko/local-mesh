@@ -1,9 +1,12 @@
 package app
 
 import (
+	"context"
+
 	"github.com/alanwnuczko/local-mesh/internal/discovery"
 	"github.com/alanwnuczko/local-mesh/internal/screens"
 	"github.com/alanwnuczko/local-mesh/internal/transfer"
+	"github.com/alanwnuczko/local-mesh/internal/trust"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -36,6 +39,7 @@ type Model struct {
 	// Identity.
 	SelfID   string
 	SelfHost string
+	Trust    *trust.Store
 
 	// Active screen.
 	ActiveScreen Screen
@@ -53,6 +57,7 @@ type Model struct {
 	SelectedPeer  discovery.Peer
 	SelectedPath  string
 	SelectedIsDir bool
+	SelectedBatch []string
 
 	// Transfer channels - created per-transfer and forwarded through the bus.
 	SendProgress chan transfer.ProgressEvent
@@ -68,12 +73,14 @@ type Model struct {
 	activeTransferID string
 	activeDirection  transfer.Direction
 	xferAbort        *transfer.Handle
+	busyPeerID       string // peer shown as busy in the list for this transfer
 
 	// Precomputed payload meta from the confirm screen, reused by startSend
 	// so a large folder is not hashed twice.
 	folderPlan      *transfer.FolderPlan
 	payloadSize     int64
 	payloadChecksum string
+	sizeCancel      context.CancelFunc // cancels an in-flight confirm pre-pass
 
 	// OnStartSend is called when a send transfer begins so main.go can
 	// register the new channels with the bus. Set before calling p.Run().
@@ -99,9 +106,11 @@ type Model struct {
 
 // NewModel creates the root model, wiring up all screen sub-models.
 func NewModel(selfID, selfHost string, width, height int) Model {
+	store, _ := trust.Load()
 	return Model{
 		SelfID:   selfID,
 		SelfHost: selfHost,
+		Trust:    store,
 		Width:    width,
 		Height:   height,
 		PeerList: screens.NewPeerList(selfID, selfHost, width, height),
@@ -118,4 +127,11 @@ func (m Model) Init() tea.Cmd {
 		m.PeerList.Init(),
 		m.Picker.Init(),
 	)
+}
+
+func (m *Model) cancelSizeCompute() {
+	if m.sizeCancel != nil {
+		m.sizeCancel()
+		m.sizeCancel = nil
+	}
 }

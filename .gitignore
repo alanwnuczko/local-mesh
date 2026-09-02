@@ -1,6 +1,6 @@
-# Built binaries (any platform)
-local-mesh
-local-mesh.exe
+# Built binaries at the repo root (do not ignore cmd/local-mesh/)
+/local-mesh
+/local-mesh.exe
 *.exe
 dist/
 

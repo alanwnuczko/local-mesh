@@ -18,6 +18,8 @@ type OverlayState struct {
 	// Reply is the channel the receive goroutine is blocked on (§3.3).
 	// Decisions are sent on it via a tea.Cmd, never directly in Update.
 	Reply chan<- protocol.DecisionMessage
+	// PairingCode is a 4-digit TOFU code shown for first-time peers.
+	PairingCode string
 }
 
 // ReplyAccept returns an accepting DecisionMessage.
@@ -113,8 +115,16 @@ func renderOverlayContent(o *OverlayState) string {
 		ui.StyleLabel.Render("Size:  "),
 		ui.StyleAccent.Render(formatBytes(o.Offer.Size))))
 
+	if o.PairingCode != "" {
+		sb.WriteString(fmt.Sprintf("  %s  %s  %s\n",
+			ui.StyleLabel.Render("Code:  "),
+			ui.StyleAccent.Render(o.PairingCode),
+			ui.StyleMuted.Render("(must match sender)")))
+	}
+
 	sb.WriteString("\n")
 	sb.WriteString("  " + ui.StyleSuccess.Render("a / y") + ui.StyleMuted.Render("  accept   "))
 	sb.WriteString(ui.StyleDanger.Render("d / N / esc") + ui.StyleMuted.Render("  reject") + "\n")
+	sb.WriteString("  " + ui.StyleMuted.Render("auto-rejects if unanswered") + "\n")
 	return sb.String()
 }

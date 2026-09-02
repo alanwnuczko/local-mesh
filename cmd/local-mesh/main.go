@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/alanwnuczko/local-mesh/internal/app"
 	"github.com/alanwnuczko/local-mesh/internal/bus"
@@ -20,29 +22,22 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func main() {
-	// H-8: write log to config dir so it works when the binary is installed in
-	// a system directory (e.g. /usr/local/bin) where the user has no write access.
-	logPath := "local-mesh.log" // fallback: current dir
-	if cfgDir, err := config.ConfigDir(); err == nil {
-		logPath = filepath.Join(cfgDir, "local-mesh.log")
-	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err == nil {
-		slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		})))
-		defer logFile.Close()
-	}
+const maxLogBytes = 5 << 20 // 5 MiB — rotate when larger
 
-	// On Windows, try to open the firewall for mDNS.
-	// Requires Administrator; errors are logged only (best-effort).
-	if runtime.GOOS == "windows" {
-		ensureWindowsFirewallRule()
-	}
+func main() {
+	setupLogging()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if code := runCLI(ctx, os.Args[1:]); code >= 0 {
+		os.Exit(code)
+	}
+
+	var firewallWarn string
+	if runtime.GOOS == "windows" {
+		firewallWarn = ensureWindowsFirewallRule()
+	}
 
 	deviceID, err := discovery.LoadOrCreateDeviceID()
 	if err != nil {
@@ -81,15 +76,10 @@ func main() {
 	model.OnStartSend = func(progress chan transfer.ProgressEvent, done chan transfer.DoneEvent) {
 		sendRegCh <- sendChanPair{progress: progress, done: done}
 	}
-	// r on the peer list force-refreshes discovery (mDNS re-query + UDP beacon).
 	model.OnRefresh = func() {
 		svc.Refresh()
 	}
 
-	// tea.WithAltScreen() gives Bubbletea a dedicated full-screen canvas that
-	// is cleared on every render, eliminating leftover lines when the terminal
-	// is resized. The first-paint blank-screen issue on Windows CMD/PowerShell
-	// is resolved by tea.ClearScreen returned from Init().
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	b := bus.New(p)
@@ -105,26 +95,79 @@ func main() {
 		}
 	}()
 
-	// Serve is a blocking Accept loop (spec §3.1 goroutine #3). It must run
-	// in its own goroutine so the Bubbletea event loop can start. Without the
-	// go keyword, p.Run() is never reached until the context is cancelled
-	// (Ctrl+C), which is why the TUI stayed blank until interrupt — and by
-	// then discovery's browse context was already cancelled too.
 	go server.Serve(ctx)
 
-	// H-6: close sendRegCh after p.Run() returns so the range goroutine below
-	// can exit cleanly instead of blocking forever.
+	uiCtx, uiCancel := context.WithCancel(ctx)
+	defer uiCancel()
+
+	// Surface non-fatal network problems once the TUI is running.
+	go func() {
+		timer := time.NewTimer(400 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-uiCtx.Done():
+			return
+		case <-timer.C:
+		}
+		if uiCtx.Err() != nil {
+			return
+		}
+		warn := firewallWarn
+		if w := svc.Warning(); w != "" {
+			if warn != "" {
+				warn = warn + " · " + w
+			} else {
+				warn = w
+			}
+		}
+		if warn != "" {
+			p.Send(app.NetworkWarningMsg{Text: warn})
+		}
+	}()
+
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "bubbletea: %v\n", err)
 		os.Exit(1)
 	}
+	uiCancel()
 	close(sendRegCh)
 }
 
-func ensureWindowsFirewallRule() {
-	// mDNS (UDP 5353) must be allowed inbound on every profile. VMware Host-Only
-	// adapters are often classified as Public, so profile=any is required.
-	// Also allow the process itself for the TCP transfer port (OS-assigned).
+func setupLogging() {
+	logPath := "local-mesh.log"
+	if cfgDir, err := config.ConfigDir(); err == nil {
+		logPath = filepath.Join(cfgDir, "local-mesh.log")
+	}
+
+	level := slog.LevelInfo
+	if os.Getenv("LOCAL_MESH_DEBUG") != "" {
+		level = slog.LevelDebug
+	}
+
+	rotateLogIfLarge(logPath)
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+		return
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
+		Level: level,
+	})))
+}
+
+func rotateLogIfLarge(path string) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.Size() < maxLogBytes {
+		return
+	}
+	_ = os.Rename(path, path+".old")
+}
+
+// ensureWindowsFirewallRule adds inbound rules if missing. Returns a short
+// warning for the TUI when rules could not be installed (typically missing
+// Administrator privileges).
+func ensureWindowsFirewallRule() string {
 	exePath, err := os.Executable()
 	if err != nil {
 		exePath = os.Args[0]
@@ -159,25 +202,30 @@ func ensureWindowsFirewallRule() {
 				"name=local-mesh TCP",
 				"protocol=TCP", "dir=in",
 				"action=allow", "profile=any",
-				// M-12: pre-quote the path so netsh can parse paths with spaces
-				// correctly. netsh expects: program="C:\path with spaces\bin.exe"
 				`program="` + exePath + `"`,
 			},
 		},
 	}
+
+	failed := 0
 	for _, r := range rules {
 		check := exec.Command("netsh", "advfirewall", "firewall", "show", "rule", "name="+r.name)
 		if err := check.Run(); err == nil {
-			continue // rule already exists
+			continue
 		}
 		add := exec.Command("netsh", r.args...)
 		if out, err := add.CombinedOutput(); err != nil {
+			failed++
 			slog.Warn("firewall rule not added (run as Administrator to fix)",
 				"rule", r.name, "err", err, "out", string(out))
 		} else {
 			slog.Info("windows firewall: added rule", "rule", r.name)
 		}
 	}
+	if failed > 0 {
+		return "Firewall rules missing — run as Administrator once so peers can discover you"
+	}
+	return ""
 }
 
 type sendChanPair struct {

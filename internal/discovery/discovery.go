@@ -47,6 +47,9 @@ type Service struct {
 	// refresh browse may write concurrently.
 	lastSeenMu sync.Mutex
 	lastSeen   map[string]time.Time
+
+	warningMu sync.Mutex
+	warning   string // non-fatal discovery problems for the TUI banner
 }
 
 // New creates a Service and registers this instance via mDNS/DNS-SD.
@@ -120,6 +123,21 @@ func (s *Service) Refresh() {
 
 // Events returns the read-only channel of discovery events.
 func (s *Service) Events() <-chan Event { return s.events }
+
+// Warning returns a non-fatal discovery problem suitable for a TUI banner
+// (e.g. UDP fallback could not bind). Empty when healthy.
+func (s *Service) Warning() string {
+	s.warningMu.Lock()
+	defer s.warningMu.Unlock()
+	return s.warning
+}
+
+func (s *Service) setWarning(msg string) {
+	s.warningMu.Lock()
+	s.warning = msg
+	s.warningMu.Unlock()
+	slog.Warn(msg)
+}
 
 // Registry returns the shared peer registry.
 func (s *Service) Registry() *Registry { return s.registry }

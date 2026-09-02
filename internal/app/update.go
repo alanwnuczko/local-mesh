@@ -1,17 +1,25 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
+	"time"
 
 	"github.com/alanwnuczko/local-mesh/internal/screens"
 	"github.com/alanwnuczko/local-mesh/internal/transfer"
+	"github.com/alanwnuczko/local-mesh/internal/trust"
 	"github.com/alanwnuczko/local-mesh/pkg/protocol"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// OverlayTimeout is how long an incoming-offer overlay waits before auto-reject.
+// Kept under the transfer idle deadline so the sender sees a clean rejection.
+const OverlayTimeout = 2 * time.Minute
 
 // Update is the single entry point for all state transitions. It is called by
 // Bubbletea's event loop - always on the same goroutine - so Model fields may
@@ -43,8 +51,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(peerCmd, pickerCmd, confirmCmd, progressCmd)
 
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" || msg.String() == "q" {
+		if msg.String() == "ctrl+c" {
 			m.abortActive()
+			m.cancelSizeCompute()
+			return m, tea.Quit
+		}
+		if msg.String() == "q" {
+			// While the peer-list filter input is focused, q is text — not quit.
+			if m.ActiveScreen == ScreenPeerList && m.PeerList != nil && m.PeerList.IsFiltering() {
+				break
+			}
+			m.abortActive()
+			m.cancelSizeCompute()
 			return m, tea.Quit
 		}
 		if m.Overlay != nil {
@@ -79,16 +97,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Reason:     protocol.ErrBusy,
 			})
 		}
-		m.Overlay = &screens.OverlayState{Offer: msg.Offer, Reply: msg.Reply}
+		code := ""
+		if m.Trust != nil && !m.Trust.Known(msg.Offer.SenderID) {
+			code = trust.PairingCode(m.SelfID, msg.Offer.SenderID)
+		}
+		m.Overlay = &screens.OverlayState{Offer: msg.Offer, Reply: msg.Reply, PairingCode: code}
 		m.xferAbort = msg.Handle
+		return m, overlayTimeoutCmd(msg.Offer.TransferID)
+
+	case OverlayTimeoutMsg:
+		if m.Overlay == nil || m.Overlay.Offer.TransferID != msg.TransferID {
+			return m, nil
+		}
+		overlay := m.Overlay
+		m.Overlay = nil
+		m.xferAbort = nil
+		return m, sendDecisionCmd(overlay.Reply, overlay.ReplyReject("timed out"))
+
+	case NetworkWarningMsg:
+		if m.PeerList != nil {
+			m.PeerList.SetBanner(msg.Text)
+		}
 		return m, nil
 
 	case SizeComputedMsg:
+		// A cancelled pre-pass can finish after the user re-selects the same
+		// path; applying it would show "context canceled" on the new confirm.
+		if errors.Is(msg.Err, context.Canceled) {
+			return m, nil
+		}
 		if m.Confirm != nil && msg.Path == m.SelectedPath {
 			m.Confirm.SetComputed(msg.Size, msg.Checksum, msg.Err)
 			m.folderPlan = msg.Plan
 			m.payloadSize = msg.Size
 			m.payloadChecksum = msg.Checksum
+			m.sizeCancel = nil
 		}
 		return m, nil
 
@@ -125,8 +168,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TransferErrorMsg:
-		// Dial failed before a session existed; the progress screen (if any)
-		// belongs to the send we just tried to start.
 		m.finishActive(msg.Err, "")
 		return m, nil
 	}
@@ -170,6 +211,10 @@ func (m Model) matchesActive(id string, dir transfer.Direction) bool {
 }
 
 func (m *Model) finishActive(err error, savedPath string) {
+	if m.busyPeerID != "" && m.PeerList != nil {
+		m.PeerList.SetBusy(m.busyPeerID, false)
+		m.busyPeerID = ""
+	}
 	m.ReceiveBusy = false
 	m.Activity = screens.ActivityIdle
 	m.activeTransferID = ""
@@ -183,6 +228,13 @@ func (m *Model) finishActive(err error, savedPath string) {
 func (m *Model) abortActive() {
 	if m.xferAbort != nil {
 		m.xferAbort.Abort()
+	}
+}
+
+func (m *Model) markBusy(peerID string) {
+	m.busyPeerID = peerID
+	if m.PeerList != nil && peerID != "" {
+		m.PeerList.SetBusy(peerID, true)
 	}
 }
 
@@ -230,15 +282,22 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, cmd)
 
 	if path, isDir, ok := m.Picker.FileSelected(); ok {
+		batch := m.Picker.SelectedBatch()
 		m.SelectedPath = path
 		m.SelectedIsDir = isDir
+		m.SelectedBatch = batch
 		m.folderPlan = nil
 		m.payloadSize = 0
 		m.payloadChecksum = ""
 		m.Picker.Reset()
-		m.Confirm = screens.NewConfirm(m.SelectedPeer, path, isDir, m.Width, m.Height)
+		code := ""
+		if m.Trust != nil && !m.Trust.Known(m.SelectedPeer.ID) {
+			code = trust.PairingCode(m.SelfID, m.SelectedPeer.ID)
+		}
+		m.Confirm = screens.NewConfirmWithMeta(m.SelectedPeer, path, isDir, code, len(batch), m.Width, m.Height)
 		m.ActiveScreen = ScreenConfirm
-		cmds = append(cmds, computeSizeCmd(path, isDir), m.Confirm.Init())
+		sizeCmd := m.startSizeCompute(path, isDir, batch)
+		cmds = append(cmds, sizeCmd, m.Confirm.Init())
 		return m, tea.Batch(cmds...)
 	}
 
@@ -251,6 +310,7 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "esc", "N":
+			m.cancelSizeCompute()
 			m.ActiveScreen = ScreenPicker
 			return m, nil
 		case "y", "enter":
@@ -258,6 +318,9 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.Confirm != nil && m.Confirm.IsReady() {
+				if m.Trust != nil {
+					m.Trust.Remember(m.SelectedPeer.ID)
+				}
 				return m.startSend()
 			}
 		}
@@ -289,6 +352,7 @@ func (m Model) startSend() (tea.Model, tea.Cmd) {
 	m.activeTransferID = id
 	m.activeDirection = transfer.DirSend
 	m.xferAbort = handle
+	m.markBusy(m.SelectedPeer.ID)
 	m.Progress = screens.NewProgress(transfer.DirSend, m.Confirm.Size(), m.Width, m.Height)
 	m.ActiveScreen = ScreenProgress
 	m.Activity = screens.ActivityTransferring
@@ -362,9 +426,13 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ReceiveBusy = true
 		m.activeTransferID = overlay.Offer.TransferID
 		m.activeDirection = transfer.DirRecv
+		m.markBusy(overlay.Offer.SenderID)
 		m.Progress = screens.NewProgress(transfer.DirRecv, overlay.Offer.Size, m.Width, m.Height)
 		m.ActiveScreen = ScreenProgress
 		m.Activity = screens.ActivityReceiving
+		if m.Trust != nil {
+			m.Trust.Remember(overlay.Offer.SenderID)
+		}
 		return m, sendDecisionCmd(overlay.Reply, overlay.ReplyAccept())
 
 	case "d", "N", "esc":
@@ -387,11 +455,27 @@ func sendDecisionCmd(reply chan<- protocol.DecisionMessage, dec protocol.Decisio
 	}
 }
 
-func computeSizeCmd(path string, isDir bool) tea.Cmd {
+func overlayTimeoutCmd(transferID string) tea.Cmd {
+	return tea.Tick(OverlayTimeout, func(t time.Time) tea.Msg {
+		return OverlayTimeoutMsg{TransferID: transferID}
+	})
+}
+
+func (m *Model) startSizeCompute(path string, isDir bool, batch []string) tea.Cmd {
+	m.cancelSizeCompute()
+	ctx, cancel := context.WithCancel(context.Background())
+	m.sizeCancel = cancel
+	return computeSizeCmd(ctx, path, isDir, batch)
+}
+
+func computeSizeCmd(ctx context.Context, path string, isDir bool, batch []string) tea.Cmd {
 	return func() tea.Msg {
-		if isDir {
-			plan, err := transfer.PlanFolder(path)
+		if len(batch) > 0 {
+			plan, err := transfer.PlanFilesCtx(ctx, batch)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
 				return SizeComputedMsg{Path: path, Err: err}
 			}
 			return SizeComputedMsg{
@@ -401,42 +485,54 @@ func computeSizeCmd(path string, isDir bool) tea.Cmd {
 				Plan:     plan,
 			}
 		}
-		size, checksum, err := computePayloadMeta(path, false)
+		if isDir {
+			plan, err := transfer.PlanFolderCtx(ctx, path)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return SizeComputedMsg{Path: path, Err: err}
+			}
+			return SizeComputedMsg{
+				Path:     path,
+				Size:     plan.Size,
+				Checksum: plan.Checksum,
+				Plan:     plan,
+			}
+		}
+		size, checksum, err := hashFileCtx(ctx, path)
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
 		return SizeComputedMsg{Path: path, Size: size, Checksum: checksum, Err: err}
 	}
 }
 
-func computePayloadMeta(path string, isDir bool) (int64, string, error) {
-	h := sha256.New()
-	var size int64
-	if isDir {
-		cw := &countWriter{w: h}
-		if err := tarFolderImpl(path, cw); err != nil {
-			return 0, "", err
-		}
-		size = cw.n
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return 0, "", err
-		}
-		defer f.Close()
-		n, err := io.Copy(h, f)
-		if err != nil {
-			return 0, "", err
-		}
-		size = n
+func hashFileCtx(ctx context.Context, path string) (int64, string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, "", err
 	}
-	return size, hex.EncodeToString(h.Sum(nil)), nil
-}
+	defer f.Close()
 
-type countWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (cw *countWriter) Write(p []byte) (int, error) {
-	n, err := cw.w.Write(p)
-	cw.n += int64(n)
-	return n, err
+	h := sha256.New()
+	buf := make([]byte, 32*1024)
+	var n int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, "", err
+		}
+		nr, er := f.Read(buf)
+		if nr > 0 {
+			h.Write(buf[:nr])
+			n += int64(nr)
+		}
+		if er == io.EOF {
+			break
+		}
+		if er != nil {
+			return 0, "", er
+		}
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), nil
 }

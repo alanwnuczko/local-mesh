@@ -14,32 +14,45 @@ import (
 
 // Confirm is the transfer confirmation screen (§4.3).
 type Confirm struct {
-	peer       discovery.Peer
-	path       string
-	isDir      bool
-	size       int64
-	checksum   string
-	computing  bool
-	computeErr error
-	spinner    spinner.Model
-	width      int
-	height     int
+	peer        discovery.Peer
+	path        string
+	isDir       bool
+	size        int64
+	checksum    string
+	computing   bool
+	computeErr  error
+	pairingCode string
+	fileCount   int
+	spinner     spinner.Model
+	width       int
+	height      int
 }
 
 // NewConfirm creates the confirmation screen.
 func NewConfirm(peer discovery.Peer, path string, isDir bool, width, height int) *Confirm {
+	return newConfirm(peer, path, isDir, "", 0, width, height)
+}
+
+// NewConfirmWithMeta creates a confirmation screen with pairing and batch info.
+func NewConfirmWithMeta(peer discovery.Peer, path string, isDir bool, pairingCode string, fileCount, width, height int) *Confirm {
+	return newConfirm(peer, path, isDir, pairingCode, fileCount, width, height)
+}
+
+func newConfirm(peer discovery.Peer, path string, isDir bool, pairingCode string, fileCount, width, height int) *Confirm {
 	sp := spinner.New()
 	sp.Spinner = spinner.Points
 	sp.Style = lipgloss.NewStyle().Foreground(ui.ColorAccent)
 
 	return &Confirm{
-		peer:      peer,
-		path:      path,
-		isDir:     isDir,
-		computing: true,
-		spinner:   sp,
-		width:     width,
-		height:    height,
+		peer:        peer,
+		path:        path,
+		isDir:       isDir,
+		computing:   true,
+		pairingCode: pairingCode,
+		fileCount:   fileCount,
+		spinner:     sp,
+		width:       width,
+		height:      height,
 	}
 }
 
@@ -78,7 +91,14 @@ func (c *Confirm) View() string {
 
 	sb.WriteString(row("Target", ui.StyleAccent.Render(c.peer.Hostname)+"  "+ui.StyleMuted.Render("("+c.peer.ShortID()+")")))
 	sb.WriteString(row("Type", ui.StyleValue.Render(kind)))
-	sb.WriteString(row("Name", ui.StyleValue.Render(filepath.Base(c.path))))
+	if c.fileCount > 1 {
+		sb.WriteString(row("Name", ui.StyleValue.Render(fmt.Sprintf("%d files", c.fileCount))))
+	} else {
+		sb.WriteString(row("Name", ui.StyleValue.Render(filepath.Base(c.path))))
+	}
+	if c.pairingCode != "" {
+		sb.WriteString(row("Code", ui.StyleAccent.Render(c.pairingCode)+"  "+ui.StyleMuted.Render("(must match receiver)")))
+	}
 
 	if c.computeErr != nil {
 		sb.WriteString("\n  " + ui.StyleDanger.Render("Error: "+c.computeErr.Error()) + "\n")

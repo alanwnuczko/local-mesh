@@ -33,7 +33,7 @@ func (s *Service) fallbackListenLoop(ctx context.Context) {
 	}
 	conn, err := net.ListenUDP("udp4", addr)
 	if err != nil {
-		slog.Warn("fallback listener failed to bind", "err", err)
+		s.setWarning("UDP discovery disabled (port 53333 in use or blocked)")
 		return
 	}
 	// M-2: use a derived context whose cancel is called on return, so the

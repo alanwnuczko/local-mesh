@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/alanwnuczko/local-mesh/internal/screens"
@@ -203,6 +205,71 @@ func TestQQuitsFromPicker(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(tea.QuitMsg); !ok {
 		t.Fatalf("cmd returned %T, want tea.QuitMsg", msg)
+	}
+}
+
+func TestOverlayTimeoutAutoRejects(t *testing.T) {
+	m := NewModel("self", "host", 80, 24)
+	reply := make(chan protocol.DecisionMessage, 1)
+	m.Overlay = &screens.OverlayState{
+		Offer: protocol.OfferMessage{TransferID: "offer-1", Name: "f", Size: 1},
+		Reply: reply,
+	}
+
+	got, cmd := m.Update(OverlayTimeoutMsg{TransferID: "offer-1"})
+	model := asModel(t, got)
+	if model.Overlay != nil {
+		t.Fatal("overlay should clear on timeout")
+	}
+	runCmd(t, cmd)
+	dec := <-reply
+	if dec.Accepted || dec.Reason != "timed out" {
+		t.Fatalf("dec=%+v", dec)
+	}
+}
+
+func TestOverlayTimeoutIgnoresStale(t *testing.T) {
+	m := NewModel("self", "host", 80, 24)
+	reply := make(chan protocol.DecisionMessage, 1)
+	m.Overlay = &screens.OverlayState{
+		Offer: protocol.OfferMessage{TransferID: "current"},
+		Reply: reply,
+	}
+	got, cmd := m.Update(OverlayTimeoutMsg{TransferID: "old"})
+	model := asModel(t, got)
+	if model.Overlay == nil {
+		t.Fatal("overlay cleared by stale timeout")
+	}
+	if cmd != nil {
+		t.Fatal("unexpected cmd")
+	}
+}
+
+func TestNetworkWarningSetsBanner(t *testing.T) {
+	m := NewModel("self", "host", 80, 24)
+	got, _ := m.Update(NetworkWarningMsg{Text: "firewall broken"})
+	model := asModel(t, got)
+	view := model.PeerList.View()
+	if !strings.Contains(view, "firewall broken") {
+		t.Fatalf("banner missing from view:\n%s", view)
+	}
+}
+
+func TestSizeComputedCanceledIsIgnored(t *testing.T) {
+	m := NewModel("self", "host", 80, 24)
+	m.SelectedPath = "/tmp/a"
+	m.Confirm = screens.NewConfirm(m.SelectedPeer, "/tmp/a", true, 80, 24)
+
+	got, _ := m.Update(SizeComputedMsg{
+		Path: "/tmp/a",
+		Err:  context.Canceled,
+	})
+	model := asModel(t, got)
+	if model.Confirm.IsReady() {
+		t.Fatal("cancelled result must not mark confirm ready")
+	}
+	if !strings.Contains(model.Confirm.View(), "Calculating") {
+		t.Fatal("confirm should still be calculating, not showing context canceled")
 	}
 }
 
