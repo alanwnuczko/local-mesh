@@ -36,6 +36,7 @@ func NewPicker(width, height int) *Picker {
 	fp.CurrentDirectory = home
 	fp.AllowedTypes = nil
 	fp.ShowHidden = false
+	fp.AutoHeight = false
 	_, innerH := panelInnerSize(width, height)
 	fp.Height = innerH - 3
 	if fp.Height < 3 {
@@ -76,6 +77,7 @@ func (p *Picker) Init() tea.Cmd { return p.fp.Init() }
 
 func (p *Picker) Update(msg tea.Msg) (*Picker, tea.Cmd) {
 	var cmds []tea.Cmd
+	fpMsg := msg
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -111,13 +113,29 @@ func (p *Picker) Update(msg tea.Msg) (*Picker, tea.Cmd) {
 				p.isDir = true
 				return p, nil
 			}
+		case "j", "down":
+			p.reloadEntries()
+			if n := len(p.entries); n > 0 && p.cursor >= n-1 {
+				p.cursor = 0
+				fpMsg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")}
+			} else {
+				p.trackCursor("j")
+			}
+		case "k", "up":
+			p.reloadEntries()
+			if len(p.entries) > 0 && p.cursor <= 0 {
+				p.cursor = len(p.entries) - 1
+				fpMsg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")}
+			} else {
+				p.trackCursor("k")
+			}
 		default:
 			p.trackCursor(msg.String())
 		}
 	}
 
 	var cmd tea.Cmd
-	p.fp, cmd = p.fp.Update(msg)
+	p.fp, cmd = p.fp.Update(fpMsg)
 	cmds = append(cmds, cmd)
 	p.reloadEntries()
 
