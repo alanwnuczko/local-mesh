@@ -104,6 +104,17 @@ Start the application by running the binary in your terminal:
 local-mesh
 ```
 
+Headless commands (SSH, WSL, scripts):
+
+```sh
+local-mesh list
+local-mesh send --peer <id|hostname> ./file-or-folder
+local-mesh recv              # prompt to accept
+local-mesh recv --yes        # auto-accept
+```
+
+`--peer` matches a device ID prefix or hostname. First-time peers print a 4-digit pairing code both sides must confirm (skipped with `--yes`). Interrupted transfers resume automatically when the same file is sent again.
+
 ### Keybindings
 
 | Key | Action |
@@ -112,6 +123,7 @@ local-mesh
 | `Enter` | Select peer / Confirm transfer |
 | `r` | Refresh peer list |
 | `s` | Select current directory for folder transfer |
+| `space` | Toggle a file into a batch send |
 | `Esc` | Return to previous screen |
 | `y` / `a` | Accept incoming transfer offer |
 | `N` / `d` / `Esc` | Reject incoming transfer offer |

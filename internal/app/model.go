@@ -6,6 +6,7 @@ import (
 	"github.com/alanwnuczko/local-mesh/internal/discovery"
 	"github.com/alanwnuczko/local-mesh/internal/screens"
 	"github.com/alanwnuczko/local-mesh/internal/transfer"
+	"github.com/alanwnuczko/local-mesh/internal/trust"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -38,6 +39,7 @@ type Model struct {
 	// Identity.
 	SelfID   string
 	SelfHost string
+	Trust    *trust.Store
 
 	// Active screen.
 	ActiveScreen Screen
@@ -55,6 +57,7 @@ type Model struct {
 	SelectedPeer  discovery.Peer
 	SelectedPath  string
 	SelectedIsDir bool
+	SelectedBatch []string
 
 	// Transfer channels - created per-transfer and forwarded through the bus.
 	SendProgress chan transfer.ProgressEvent
@@ -103,9 +106,11 @@ type Model struct {
 
 // NewModel creates the root model, wiring up all screen sub-models.
 func NewModel(selfID, selfHost string, width, height int) Model {
+	store, _ := trust.Load()
 	return Model{
 		SelfID:   selfID,
 		SelfHost: selfHost,
+		Trust:    store,
 		Width:    width,
 		Height:   height,
 		PeerList: screens.NewPeerList(selfID, selfHost, width, height),

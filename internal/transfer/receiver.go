@@ -104,7 +104,12 @@ func RunReceive(cfg RecvConfig) {
 		return
 	}
 
+	resumeTmp, resumeOff, canResume := LookupPartial(offer.TransferID, offer.Checksum, offer.Size, offer.IsDir)
+
 	decision := cfg.Decider(ctx, offer)
+	if decision.Accepted && canResume {
+		decision.ResumeOffset = resumeOff
+	}
 
 	decPayload, err := protocol.MarshalDecision(decision)
 	if err != nil {
@@ -125,95 +130,27 @@ func RunReceive(cfg RecvConfig) {
 		return
 	}
 
-	emitProgress(cfg.Progress, ProgressEvent{TransferID: transferID, Phase: PhaseTransferring, BytesTotal: offer.Size})
+	emitProgress(cfg.Progress, ProgressEvent{TransferID: transferID, Phase: PhaseTransferring, BytesDone: decision.ResumeOffset, BytesTotal: offer.Size})
 
 	hasher := sha256.New()
-	pr, pw := io.Pipe()
+	var localRecvd atomic.Int64
 
-	var (
-		frameErr   error
-		localRecvd atomic.Int64
-	)
-	doneCh := make(chan struct{})
+	var tmpPath string
+	var tmpFile *os.File
+	var commitErr error
 
-	go func() {
-		defer close(doneCh)
-		lastEmit := time.Now()
-		lastBytes := int64(0)
-
-		for {
-			if contextDone(ctx) {
-				pw.CloseWithError(ErrAborted)
-				frameErr = ErrAborted
-				return
-			}
-			ftype, payload, err := readFrame(cfg.Conn)
-			if err != nil {
-				pw.CloseWithError(fmt.Errorf("%s: read frame: %w", protocol.ErrIO, err))
-				frameErr = err
-				return
-			}
-			switch ftype {
-			case protocol.FrameChunk:
-				if _, err := pw.Write(payload); err != nil {
-					pw.CloseWithError(err)
-					frameErr = err
-					return
-				}
-				recvd := localRecvd.Add(int64(len(payload)))
-
-				if time.Since(lastEmit) >= progressInterval {
-					elapsed := time.Since(lastEmit).Seconds()
-					bps := float64(recvd-lastBytes) / elapsed
-					emitProgress(cfg.Progress, ProgressEvent{
-						TransferID:  transferID,
-						BytesDone:   recvd,
-						BytesTotal:  offer.Size,
-						BytesPerSec: bps,
-						Phase:       PhaseTransferring,
-					})
-					lastEmit = time.Now()
-					lastBytes = recvd
-				}
-
-			case protocol.FrameComplete:
-				if _, err := protocol.UnmarshalComplete(payload); err != nil {
-					pw.CloseWithError(err)
-					frameErr = err
-					return
-				}
-				pw.Close()
-				return
-
-			case protocol.FrameError:
-				em, _ := protocol.UnmarshalError(payload)
-				frameErr = fmt.Errorf("sender error: %s: %s", em.Code, em.Message)
-				pw.CloseWithError(frameErr)
-				return
-
-			default:
-				frameErr = fmt.Errorf("%s: unexpected frame 0x%02x", protocol.ErrProtocol, ftype)
-				pw.CloseWithError(frameErr)
-				return
+	if canResume && decision.ResumeOffset > 0 {
+		tmpFile, commitErr = os.OpenFile(resumeTmp, os.O_RDWR, 0600)
+		if commitErr == nil {
+			tmpPath = resumeTmp
+			if _, err := io.Copy(hasher, tmpFile); err != nil {
+				commitErr = err
+			} else {
+				localRecvd.Store(decision.ResumeOffset)
 			}
 		}
-	}()
-
-	tee := io.TeeReader(pr, hasher)
-
-	var (
-		commitErr error
-		tmpPath   string
-		destPath  string
-		tmpDir    string
-	)
-
-	destPath, commitErr = config.UniqueDestPath(downloadsDir, offer.Name)
-	if commitErr == nil && offer.IsDir {
-		tmpDir, commitErr = os.MkdirTemp(downloadsDir, "lm-recv-*")
 	}
-	var tmpFile *os.File
-	if commitErr == nil && !offer.IsDir {
+	if tmpFile == nil {
 		tmpFile, commitErr = os.CreateTemp(downloadsDir, "lm-recv-*")
 		if commitErr == nil {
 			tmpPath = tmpFile.Name()
@@ -224,52 +161,83 @@ func RunReceive(cfg RecvConfig) {
 		if tmpFile != nil {
 			_ = tmpFile.Close()
 		}
-		pw.CloseWithError(commitErr)
-		<-doneCh
-		if tmpPath != "" {
-			_ = os.Remove(tmpPath)
-		}
-		if tmpDir != "" {
-			_ = os.RemoveAll(tmpDir)
-		}
 		sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, commitErr.Error())
 		saveErr = commitErr
 		return
 	}
 
-	if offer.IsDir {
-		commitErr = UntarFolder(tee, tmpDir)
-	} else {
-		_, copyErr := io.Copy(tmpFile, tee)
-		closeErr := tmpFile.Close()
-		tmpFile = nil
-		if copyErr != nil {
-			commitErr = copyErr
-		} else if closeErr != nil {
-			commitErr = closeErr
+	lastEmit := time.Now()
+	lastBytes := localRecvd.Load()
+	for {
+		if contextDone(ctx) {
+			commitErr = ErrAborted
+			break
+		}
+		ftype, payload, err := readFrame(cfg.Conn)
+		if err != nil {
+			commitErr = fmt.Errorf("%s: read frame: %w", protocol.ErrIO, err)
+			break
+		}
+		switch ftype {
+		case protocol.FrameChunk:
+			if _, err := tmpFile.Write(payload); err != nil {
+				commitErr = err
+			} else if _, err := hasher.Write(payload); err != nil {
+				commitErr = err
+			}
+			if commitErr != nil {
+				break
+			}
+			recvd := localRecvd.Add(int64(len(payload)))
+			if time.Since(lastEmit) >= progressInterval {
+				elapsed := time.Since(lastEmit).Seconds()
+				bps := float64(recvd-lastBytes) / elapsed
+				emitProgress(cfg.Progress, ProgressEvent{
+					TransferID:  transferID,
+					BytesDone:   recvd,
+					BytesTotal:  offer.Size,
+					BytesPerSec: bps,
+					Phase:       PhaseTransferring,
+				})
+				lastEmit = time.Now()
+				lastBytes = recvd
+			}
+		case protocol.FrameComplete:
+			if _, err := protocol.UnmarshalComplete(payload); err != nil {
+				commitErr = err
+			}
+			goto received
+		case protocol.FrameError:
+			em, _ := protocol.UnmarshalError(payload)
+			commitErr = fmt.Errorf("sender error: %s: %s", em.Code, em.Message)
+			goto received
+		default:
+			commitErr = fmt.Errorf("%s: unexpected frame 0x%02x", protocol.ErrProtocol, ftype)
+			goto received
+		}
+		if commitErr != nil {
+			break
 		}
 	}
-
-	if commitErr == nil {
-		_, _ = io.Copy(io.Discard, tee)
-	}
-
-	<-doneCh
-	if frameErr != nil && commitErr == nil {
-		commitErr = frameErr
-	}
-
-	cleanupTemps := func() {
-		if tmpPath != "" {
-			_ = os.Remove(tmpPath)
-		}
-		if tmpDir != "" {
-			_ = os.RemoveAll(tmpDir)
-		}
-	}
+received:
+	_ = tmpFile.Close()
+	tmpFile = nil
 
 	if commitErr != nil {
-		cleanupTemps()
+		if tmpPath != "" {
+			if fi, err := os.Stat(tmpPath); err == nil && fi.Size() > 0 && fi.Size() < offer.Size {
+				SavePartial(Partial{
+					TransferID: transferID,
+					Checksum:   offer.Checksum,
+					Size:       offer.Size,
+					Name:       offer.Name,
+					IsDir:      offer.IsDir,
+					TmpPath:    tmpPath,
+				})
+			} else {
+				_ = os.Remove(tmpPath)
+			}
+		}
 		sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, commitErr.Error())
 		saveErr = commitErr
 		return
@@ -283,32 +251,51 @@ func RunReceive(cfg RecvConfig) {
 		if localRecvd.Load() != offer.Size {
 			detail = fmt.Sprintf("size mismatch: received %d want %d", localRecvd.Load(), offer.Size)
 		}
-		cleanupTemps()
+		_ = os.Remove(tmpPath)
+		ClearPartial(transferID)
 		sendErrorFrame(cfg.Conn, transferID, protocol.ErrChecksum, detail)
 		saveErr = fmt.Errorf("%s: %s", protocol.ErrChecksum, detail)
 		return
 	}
 
-	// Commit first, then ack. A failed rename must not look like success to the sender.
+	destPath, err := config.UniqueDestPath(downloadsDir, offer.Name)
+	if err != nil {
+		saveErr = err
+		sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, err.Error())
+		return
+	}
 	if offer.IsDir {
-		if err := os.Rename(tmpDir, destPath); err != nil {
-			cleanupTemps()
+		if err := os.MkdirAll(destPath, 0755); err != nil {
+			saveErr = err
 			sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, err.Error())
-			saveErr = fmt.Errorf("commit folder: %w", err)
 			return
 		}
-		tmpDir = ""
+		tf, err := os.Open(tmpPath)
+		if err != nil {
+			saveErr = err
+			sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, err.Error())
+			return
+		}
+		untarErr := UntarFolder(tf, destPath)
+		tf.Close()
+		_ = os.Remove(tmpPath)
+		if untarErr != nil {
+			_ = os.RemoveAll(destPath)
+			sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, untarErr.Error())
+			saveErr = untarErr
+			return
+		}
 		savedPath = destPath
 	} else {
 		if err := os.Rename(tmpPath, destPath); err != nil {
-			cleanupTemps()
 			sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, err.Error())
 			saveErr = fmt.Errorf("commit file: %w", err)
 			return
 		}
-		tmpPath = ""
 		savedPath = destPath
 	}
+	ClearPartial(transferID)
+	tmpPath = ""
 
 	ackPayload, err := protocol.MarshalAck(protocol.AckMessage{
 		TransferID: transferID,

@@ -27,13 +27,17 @@ const maxLogBytes = 5 << 20 // 5 MiB — rotate when larger
 func main() {
 	setupLogging()
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if code := runCLI(ctx, os.Args[1:]); code >= 0 {
+		os.Exit(code)
+	}
+
 	var firewallWarn string
 	if runtime.GOOS == "windows" {
 		firewallWarn = ensureWindowsFirewallRule()
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 
 	deviceID, err := discovery.LoadOrCreateDeviceID()
 	if err != nil {

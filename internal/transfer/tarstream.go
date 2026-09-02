@@ -63,6 +63,83 @@ func PlanFolderCtx(ctx context.Context, srcDir string) (*FolderPlan, error) {
 	}, nil
 }
 
+// PlanFilesCtx snapshots a list of files as a tar under a "files/" root so
+// a multi-select send uses the same folder-transfer path.
+func PlanFilesCtx(ctx context.Context, paths []string) (*FolderPlan, error) {
+	entries, err := snapshotFiles(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	cw := &countingWriter{w: h}
+	if err := writeTar(ctx, entries, cw, false); err != nil {
+		return nil, err
+	}
+	return &FolderPlan{
+		Root:     "files",
+		Entries:  entries,
+		Size:     cw.n,
+		Checksum: hex.EncodeToString(h.Sum(nil)),
+	}, nil
+}
+
+func snapshotFiles(ctx context.Context, paths []string) ([]TarEntry, error) {
+	now := time.Now().Unix()
+	entries := []TarEntry{{
+		Name:    "files/",
+		IsDir:   true,
+		Mode:    os.ModeDir | 0755,
+		ModTime: now,
+	}}
+	used := map[string]int{}
+	for _, p := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			return nil, err
+		}
+		if info.IsDir() || !info.Mode().IsRegular() {
+			continue
+		}
+		base := filepath.Base(p)
+		n := used[base]
+		used[base]++
+		if n > 0 {
+			ext := filepath.Ext(base)
+			stem := base[:len(base)-len(ext)]
+			base = stem + "(" + itoa(n) + ")" + ext
+		}
+		entries = append(entries, TarEntry{
+			FSPath:  p,
+			Name:    "files/" + base,
+			Size:    info.Size(),
+			Mode:    info.Mode(),
+			ModTime: info.ModTime().Unix(),
+			IsDir:   false,
+		})
+	}
+	if len(entries) < 2 {
+		return nil, fmt.Errorf("no files to send")
+	}
+	return entries, nil
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [12]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
 // Stream writes the planned tar to w. Regular files are re-read; if size or
 // mtime no longer match the snapshot, Stream returns an error instead of
 // producing a tar that would fail the receiver checksum.

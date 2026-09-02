@@ -14,6 +14,40 @@ import (
 	"testing"
 )
 
+func TestPlanFilesCtx(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.txt")
+	b := filepath.Join(dir, "b.txt")
+	if err := os.WriteFile(a, []byte("A"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("B"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFilesCtx(context.Background(), []string{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Size == 0 || plan.Root != "files" {
+		t.Fatalf("plan=%+v", plan)
+	}
+	var buf bytes.Buffer
+	if err := plan.Stream(&buf); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "out")
+	if err := os.Mkdir(dest, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := UntarFolder(&buf, dest); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "files", "a.txt"))
+	if err != nil || string(got) != "A" {
+		t.Fatalf("a.txt=%q err=%v", got, err)
+	}
+}
+
 func TestPlanFolderCtxCancel(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "tree")

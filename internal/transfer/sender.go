@@ -43,8 +43,8 @@ func RunSend(cfg SendConfig) {
 	}
 
 	transferID := cfg.TransferID
-	if transferID == "" {
-		transferID = NewTransferID()
+	if transferID == "" && cfg.Checksum != "" {
+		transferID = TransferIDForChecksum(cfg.Checksum)
 	}
 	if cfg.Handle != nil {
 		cfg.Handle.SetTransferID(transferID)
@@ -86,6 +86,9 @@ func RunSend(cfg SendConfig) {
 			}
 		}
 		size, checksum = plan.Size, plan.Checksum
+		if transferID == "" {
+			transferID = TransferIDForChecksum(checksum)
+		}
 	} else if cfg.Checksum != "" {
 		size, checksum = cfg.Size, cfg.Checksum
 		fi, err := os.Stat(cfg.Path)
@@ -104,9 +107,21 @@ func RunSend(cfg SendConfig) {
 			sendErr = fmt.Errorf("compute payload meta: %w", err)
 			return
 		}
+		if transferID == "" {
+			transferID = TransferIDForChecksum(checksum)
+		}
+	}
+	if transferID == "" {
+		transferID = NewTransferID()
+	}
+	if cfg.Handle != nil {
+		cfg.Handle.SetTransferID(transferID)
 	}
 
 	name := filepath.Base(cfg.Path)
+	if cfg.IsDir && plan != nil && plan.Root == "files" {
+		name = "files"
+	}
 
 	offer := protocol.OfferMessage{
 		Version:    protocol.ProtocolVersion,
@@ -158,8 +173,13 @@ func RunSend(cfg SendConfig) {
 		return
 	}
 
-	emitProgress(cfg.Progress, ProgressEvent{TransferID: transferID, Phase: PhaseTransferring, BytesTotal: size})
-	bytesSent, err := streamPayload(ctx, cfg.Conn, cfg.Path, cfg.IsDir, plan, transferID, size, cfg.Progress)
+	skip := dec.ResumeOffset
+	if skip < 0 || skip >= size {
+		skip = 0
+	}
+
+	emitProgress(cfg.Progress, ProgressEvent{TransferID: transferID, Phase: PhaseTransferring, BytesDone: skip, BytesTotal: size})
+	bytesSent, err := streamPayload(ctx, cfg.Conn, cfg.Path, cfg.IsDir, plan, transferID, size, skip, cfg.Progress)
 	if err != nil {
 		sendErr = err
 		return
@@ -203,6 +223,7 @@ func RunSend(cfg SendConfig) {
 		return
 	}
 
+	ForgetSendID(checksum)
 	emitProgress(cfg.Progress, ProgressEvent{TransferID: transferID, Phase: PhaseDone, BytesDone: bytesSent, BytesTotal: size})
 }
 
@@ -234,7 +255,7 @@ func computePayloadMeta(path string, isDir bool) (size int64, checksum string, e
 
 // streamPayload sends the file/folder payload as FrameChunk frames and returns
 // the total bytes sent.
-func streamPayload(ctx context.Context, w io.Writer, path string, isDir bool, plan *FolderPlan, transferID string, totalSize int64, progress chan<- ProgressEvent) (int64, error) {
+func streamPayload(ctx context.Context, w io.Writer, path string, isDir bool, plan *FolderPlan, transferID string, totalSize, skip int64, progress chan<- ProgressEvent) (int64, error) {
 	var src io.Reader
 	var closer io.Closer
 
@@ -263,10 +284,20 @@ func streamPayload(ctx context.Context, w io.Writer, path string, isDir bool, pl
 		defer closer.Close()
 	}
 
+	if skip > 0 {
+		if rs, ok := src.(io.Seeker); ok {
+			if _, err := rs.Seek(skip, io.SeekStart); err != nil {
+				return 0, fmt.Errorf("seek resume offset: %w", err)
+			}
+		} else if _, err := io.CopyN(io.Discard, src, skip); err != nil {
+			return 0, fmt.Errorf("skip resume offset: %w", err)
+		}
+	}
+
 	buf := make([]byte, protocol.ChunkSize)
-	var sent int64
+	sent := skip
 	lastEmit := time.Now()
-	lastBytes := int64(0)
+	lastBytes := skip
 
 	for {
 		if contextDone(ctx) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/alanwnuczko/local-mesh/internal/screens"
 	"github.com/alanwnuczko/local-mesh/internal/transfer"
+	"github.com/alanwnuczko/local-mesh/internal/trust"
 	"github.com/alanwnuczko/local-mesh/pkg/protocol"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -96,7 +97,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Reason:     protocol.ErrBusy,
 			})
 		}
-		m.Overlay = &screens.OverlayState{Offer: msg.Offer, Reply: msg.Reply}
+		code := ""
+		if m.Trust != nil && !m.Trust.Known(msg.Offer.SenderID) {
+			code = trust.PairingCode(m.SelfID, msg.Offer.SenderID)
+		}
+		m.Overlay = &screens.OverlayState{Offer: msg.Offer, Reply: msg.Reply, PairingCode: code}
 		m.xferAbort = msg.Handle
 		return m, overlayTimeoutCmd(msg.Offer.TransferID)
 
@@ -277,15 +282,21 @@ func (m Model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, cmd)
 
 	if path, isDir, ok := m.Picker.FileSelected(); ok {
+		batch := m.Picker.SelectedBatch()
 		m.SelectedPath = path
 		m.SelectedIsDir = isDir
+		m.SelectedBatch = batch
 		m.folderPlan = nil
 		m.payloadSize = 0
 		m.payloadChecksum = ""
 		m.Picker.Reset()
-		m.Confirm = screens.NewConfirm(m.SelectedPeer, path, isDir, m.Width, m.Height)
+		code := ""
+		if m.Trust != nil && !m.Trust.Known(m.SelectedPeer.ID) {
+			code = trust.PairingCode(m.SelfID, m.SelectedPeer.ID)
+		}
+		m.Confirm = screens.NewConfirmWithMeta(m.SelectedPeer, path, isDir, code, len(batch), m.Width, m.Height)
 		m.ActiveScreen = ScreenConfirm
-		sizeCmd := m.startSizeCompute(path, isDir)
+		sizeCmd := m.startSizeCompute(path, isDir, batch)
 		cmds = append(cmds, sizeCmd, m.Confirm.Init())
 		return m, tea.Batch(cmds...)
 	}
@@ -307,6 +318,9 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.Confirm != nil && m.Confirm.IsReady() {
+				if m.Trust != nil {
+					m.Trust.Remember(m.SelectedPeer.ID)
+				}
 				return m.startSend()
 			}
 		}
@@ -416,6 +430,9 @@ func (m Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.Progress = screens.NewProgress(transfer.DirRecv, overlay.Offer.Size, m.Width, m.Height)
 		m.ActiveScreen = ScreenProgress
 		m.Activity = screens.ActivityReceiving
+		if m.Trust != nil {
+			m.Trust.Remember(overlay.Offer.SenderID)
+		}
 		return m, sendDecisionCmd(overlay.Reply, overlay.ReplyAccept())
 
 	case "d", "N", "esc":
@@ -444,15 +461,30 @@ func overlayTimeoutCmd(transferID string) tea.Cmd {
 	})
 }
 
-func (m *Model) startSizeCompute(path string, isDir bool) tea.Cmd {
+func (m *Model) startSizeCompute(path string, isDir bool, batch []string) tea.Cmd {
 	m.cancelSizeCompute()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.sizeCancel = cancel
-	return computeSizeCmd(ctx, path, isDir)
+	return computeSizeCmd(ctx, path, isDir, batch)
 }
 
-func computeSizeCmd(ctx context.Context, path string, isDir bool) tea.Cmd {
+func computeSizeCmd(ctx context.Context, path string, isDir bool, batch []string) tea.Cmd {
 	return func() tea.Msg {
+		if len(batch) > 0 {
+			plan, err := transfer.PlanFilesCtx(ctx, batch)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return SizeComputedMsg{Path: path, Err: err}
+			}
+			return SizeComputedMsg{
+				Path:     path,
+				Size:     plan.Size,
+				Checksum: plan.Checksum,
+				Plan:     plan,
+			}
+		}
 		if isDir {
 			plan, err := transfer.PlanFolderCtx(ctx, path)
 			if err != nil {

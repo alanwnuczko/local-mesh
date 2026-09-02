@@ -20,8 +20,8 @@ type OfferMessage struct {
 }
 
 // DecisionMessage is sent by the receiver as a FrameDecision frame.
-// ResumeOffset is reserved for the resumable-transfer stretch milestone (§2.3);
-// it is always 0 in v1.
+// ResumeOffset is the byte offset to continue from when a matching partial
+// payload already exists; 0 means send from the start.
 type DecisionMessage struct {
 	TransferID   string `json:"TransferID"`
 	Accepted     bool   `json:"Accepted"`
