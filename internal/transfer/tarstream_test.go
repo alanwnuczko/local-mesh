@@ -3,14 +3,37 @@ package transfer
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestPlanFolderCtxCancel(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "tree")
+	if err := os.Mkdir(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Enough files that cancel mid-walk is observable.
+	for i := 0; i < 200; i++ {
+		name := filepath.Join(src, fmt.Sprintf("f-%03d.txt", i))
+		if err := os.WriteFile(name, bytes.Repeat([]byte("x"), 4096), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := PlanFolderCtx(ctx, src)
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+}
 
 func TestPlanFolderThenStreamMatchesHash(t *testing.T) {
 	dir := t.TempDir()

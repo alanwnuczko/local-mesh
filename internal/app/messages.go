@@ -83,3 +83,14 @@ type SizeComputedMsg struct {
 	Plan     *transfer.FolderPlan // non-nil for directory selections
 	Err      error
 }
+
+// OverlayTimeoutMsg fires when the user has not accepted/rejected an incoming
+// offer within OverlayTimeout.
+type OverlayTimeoutMsg struct {
+	TransferID string
+}
+
+// NetworkWarningMsg sets a persistent peer-list banner (firewall / UDP issues).
+type NetworkWarningMsg struct {
+	Text string
+}

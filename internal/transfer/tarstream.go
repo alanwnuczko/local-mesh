@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"archive/tar"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -37,16 +38,21 @@ type FolderPlan struct {
 	Checksum string
 }
 
-// PlanFolder walks srcDir and hashes the tar it would produce. The returned
-// plan can later Stream the same bytes, or abort if the tree changed.
+// PlanFolder walks srcDir and hashes the tar it would produce.
 func PlanFolder(srcDir string) (*FolderPlan, error) {
-	entries, err := snapshotFolder(srcDir)
+	return PlanFolderCtx(context.Background(), srcDir)
+}
+
+// PlanFolderCtx is PlanFolder with cancellation. ctx is checked between
+// directory entries and while hashing file contents.
+func PlanFolderCtx(ctx context.Context, srcDir string) (*FolderPlan, error) {
+	entries, err := snapshotFolder(ctx, srcDir)
 	if err != nil {
 		return nil, err
 	}
 	h := sha256.New()
 	cw := &countingWriter{w: h}
-	if err := writeTar(entries, cw, false); err != nil {
+	if err := writeTar(ctx, entries, cw, false); err != nil {
 		return nil, err
 	}
 	return &FolderPlan{
@@ -61,28 +67,34 @@ func PlanFolder(srcDir string) (*FolderPlan, error) {
 // mtime no longer match the snapshot, Stream returns an error instead of
 // producing a tar that would fail the receiver checksum.
 func (p *FolderPlan) Stream(w io.Writer) error {
+	return p.StreamCtx(context.Background(), w)
+}
+
+// StreamCtx is Stream with cancellation.
+func (p *FolderPlan) StreamCtx(ctx context.Context, w io.Writer) error {
 	if p == nil {
 		return fmt.Errorf("nil folder plan")
 	}
-	return writeTar(p.Entries, w, true)
+	return writeTar(ctx, p.Entries, w, true)
 }
 
 // TarFolder writes a tar stream of the directory at srcDir into w.
-// Files are stored with paths relative to srcDir's parent, so the
-// archive contains the folder itself (e.g., "myfolder/file.txt").
 func TarFolder(srcDir string, w io.Writer) error {
-	entries, err := snapshotFolder(srcDir)
+	entries, err := snapshotFolder(context.Background(), srcDir)
 	if err != nil {
 		return err
 	}
-	return writeTar(entries, w, false)
+	return writeTar(context.Background(), entries, w, false)
 }
 
-func snapshotFolder(srcDir string) ([]TarEntry, error) {
+func snapshotFolder(ctx context.Context, srcDir string) ([]TarEntry, error) {
 	srcDir = filepath.Clean(srcDir)
 	var entries []TarEntry
 	err := filepath.WalkDir(srcDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
@@ -125,9 +137,13 @@ func snapshotFolder(srcDir string) ([]TarEntry, error) {
 	return entries, nil
 }
 
-func writeTar(entries []TarEntry, w io.Writer, verify bool) error {
+func writeTar(ctx context.Context, entries []TarEntry, w io.Writer, verify bool) error {
 	tw := tar.NewWriter(w)
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			_ = tw.Close()
+			return err
+		}
 		hdr := &tar.Header{
 			Name:    e.Name,
 			Mode:    int64(e.Mode.Perm()),
@@ -158,7 +174,7 @@ func writeTar(entries []TarEntry, w io.Writer, verify bool) error {
 		if err != nil {
 			return err
 		}
-		n, err := io.Copy(tw, io.LimitReader(f, e.Size))
+		n, err := copyCtx(ctx, tw, io.LimitReader(f, e.Size))
 		f.Close()
 		if err != nil {
 			return err
@@ -171,6 +187,33 @@ func writeTar(entries []TarEntry, w io.Writer, verify bool) error {
 		return fmt.Errorf("tar close: %w", err)
 	}
 	return nil
+}
+
+func copyCtx(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	buf := make([]byte, 32*1024)
+	var written int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[:nr])
+			written += int64(nw)
+			if ew != nil {
+				return written, ew
+			}
+			if nw != nr {
+				return written, io.ErrShortWrite
+			}
+		}
+		if er == io.EOF {
+			return written, nil
+		}
+		if er != nil {
+			return written, er
+		}
+	}
 }
 
 func assertUnchanged(e TarEntry) error {
@@ -234,15 +277,11 @@ func confinedTarTarget(destDir, name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("tar entry has empty path")
 	}
-	// Normalise separators then reuse the shared confinement helper so tar
-	// names and UniqueDestPath obey the same rules.
 	rel := strings.ReplaceAll(name, "\\", "/")
 	rel = strings.TrimPrefix(rel, "./")
 	if rel == "." || rel == "" {
 		return filepath.Abs(destDir)
 	}
-	// path.Clean keeps a trailing-slash directory as a file-like name; strip
-	// it so ConfineRel joins a directory name, not "foo/".
 	rel = strings.TrimSuffix(rel, "/")
 	if rel == "" {
 		return filepath.Abs(destDir)

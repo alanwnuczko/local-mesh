@@ -217,6 +217,62 @@ func TestSlowDecisionNoRST(t *testing.T) {
 	_ = bytes.Compare(nil, nil) // suppress unused import if needed
 }
 
+func TestInvalidOfferRejectedBeforeDecider(t *testing.T) {
+	dir := t.TempDir()
+	config.UseDownloadsDir(dir)
+	t.Cleanup(func() { config.UseDownloadsDir("") })
+
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+
+	deciderCalled := make(chan struct{}, 1)
+	done := make(chan DoneEvent, 1)
+	go RunReceive(RecvConfig{
+		Ctx:  context.Background(),
+		Conn: b,
+		Decider: func(ctx context.Context, offer protocol.OfferMessage) protocol.DecisionMessage {
+			deciderCalled <- struct{}{}
+			return protocol.DecisionMessage{TransferID: offer.TransferID, Accepted: true}
+		},
+		Progress: make(chan ProgressEvent, 8),
+		Done:     done,
+	})
+
+	offer := protocol.OfferMessage{
+		Version:    protocol.ProtocolVersion,
+		SenderID:   "s",
+		SenderHost: "h",
+		Name:       "x.txt",
+		Size:       1,
+		Checksum:   "not-valid",
+		TransferID: "bad",
+	}
+	payload, _ := protocol.MarshalOffer(offer)
+	if err := protocol.WriteFrame(a, protocol.FrameOffer, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		for {
+			if _, _, err := protocol.ReadFrame(a); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-deciderCalled:
+		t.Fatal("decider must not run for invalid offer")
+	case ev := <-done:
+		if ev.Err == nil {
+			t.Fatal("expected validation error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout")
+	}
+}
+
 func TestChecksumMismatchDoesNotCommit(t *testing.T) {
 	dir := t.TempDir()
 	config.UseDownloadsDir(dir)

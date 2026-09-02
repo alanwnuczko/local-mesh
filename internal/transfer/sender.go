@@ -244,7 +244,7 @@ func streamPayload(ctx context.Context, w io.Writer, path string, isDir bool, pl
 		go func() {
 			var err error
 			if plan != nil {
-				err = plan.Stream(pw)
+				err = plan.StreamCtx(ctx, pw)
 			} else {
 				err = TarFolder(path, pw)
 			}

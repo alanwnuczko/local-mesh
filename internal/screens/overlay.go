@@ -116,5 +116,6 @@ func renderOverlayContent(o *OverlayState) string {
 	sb.WriteString("\n")
 	sb.WriteString("  " + ui.StyleSuccess.Render("a / y") + ui.StyleMuted.Render("  accept   "))
 	sb.WriteString(ui.StyleDanger.Render("d / N / esc") + ui.StyleMuted.Render("  reject") + "\n")
+	sb.WriteString("  " + ui.StyleMuted.Render("auto-rejects if unanswered") + "\n")
 	return sb.String()
 }

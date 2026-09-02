@@ -86,6 +86,24 @@ func RunReceive(cfg RecvConfig) {
 		return
 	}
 
+	if err := protocol.ValidateOffer(offer); err != nil {
+		sendErrorFrame(cfg.Conn, transferID, protocol.ErrProtocol, err.Error())
+		saveErr = err
+		return
+	}
+
+	downloadsDir, err := config.DownloadsDir()
+	if err != nil {
+		sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, err.Error())
+		saveErr = fmt.Errorf("downloads dir: %w", err)
+		return
+	}
+	if err := config.EnsureSpace(downloadsDir, offer.Size); err != nil {
+		sendErrorFrame(cfg.Conn, transferID, protocol.ErrIO, err.Error())
+		saveErr = err
+		return
+	}
+
 	decision := cfg.Decider(ctx, offer)
 
 	decPayload, err := protocol.MarshalDecision(decision)
@@ -180,14 +198,6 @@ func RunReceive(cfg RecvConfig) {
 			}
 		}
 	}()
-
-	downloadsDir, err := config.DownloadsDir()
-	if err != nil {
-		pw.CloseWithError(err)
-		saveErr = fmt.Errorf("downloads dir: %w", err)
-		<-doneCh
-		return
-	}
 
 	tee := io.TeeReader(pr, hasher)
 

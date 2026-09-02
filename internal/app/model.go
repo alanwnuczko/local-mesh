@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+
 	"github.com/alanwnuczko/local-mesh/internal/discovery"
 	"github.com/alanwnuczko/local-mesh/internal/screens"
 	"github.com/alanwnuczko/local-mesh/internal/transfer"
@@ -68,12 +70,14 @@ type Model struct {
 	activeTransferID string
 	activeDirection  transfer.Direction
 	xferAbort        *transfer.Handle
+	busyPeerID       string // peer shown as busy in the list for this transfer
 
 	// Precomputed payload meta from the confirm screen, reused by startSend
 	// so a large folder is not hashed twice.
 	folderPlan      *transfer.FolderPlan
 	payloadSize     int64
 	payloadChecksum string
+	sizeCancel      context.CancelFunc // cancels an in-flight confirm pre-pass
 
 	// OnStartSend is called when a send transfer begins so main.go can
 	// register the new channels with the bus. Set before calling p.Run().
@@ -118,4 +122,11 @@ func (m Model) Init() tea.Cmd {
 		m.PeerList.Init(),
 		m.Picker.Init(),
 	)
+}
+
+func (m *Model) cancelSizeCompute() {
+	if m.sizeCancel != nil {
+		m.sizeCancel()
+		m.sizeCancel = nil
+	}
 }

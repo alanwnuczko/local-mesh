@@ -101,10 +101,15 @@ const logoLineCount = 6
 // peerItem wraps a discovery.Peer so it satisfies list.Item.
 type peerItem struct {
 	peer discovery.Peer
+	busy bool
 }
 
 func (p peerItem) Title() string {
-	return fmt.Sprintf("%s  %s", p.peer.Hostname, ui.StyleMuted.Render("("+p.peer.ShortID()+")"))
+	title := fmt.Sprintf("%s  %s", p.peer.Hostname, ui.StyleMuted.Render("("+p.peer.ShortID()+")"))
+	if p.busy {
+		title += "  " + ui.StyleAccent.Render("busy")
+	}
+	return title
 }
 
 func (p peerItem) Description() string {
@@ -121,6 +126,8 @@ type PeerList struct {
 	selfHost string
 	width    int
 	height   int
+	banner   string
+	busy     map[string]bool
 }
 
 // NewPeerList creates the peer-list screen.
@@ -163,6 +170,7 @@ func NewPeerList(selfID, selfHost string, width, height int) *PeerList {
 		selfHost: selfHost,
 		width:    width,
 		height:   height,
+		busy:     make(map[string]bool),
 	}
 }
 
@@ -204,6 +212,10 @@ func (pl *PeerList) View() string {
 	sb.WriteString(renderLogo(innerW))
 	sb.WriteString("\n")
 
+	if pl.banner != "" {
+		sb.WriteString("  " + ui.StyleDanger.Render(pl.banner) + "\n\n")
+	}
+
 	if len(pl.list.Items()) == 0 {
 		sb.WriteString(fmt.Sprintf("\n  %s %s\n",
 			pl.spinner.View(),
@@ -219,13 +231,46 @@ func (pl *PeerList) View() string {
 
 // UpsertPeer adds or refreshes a peer entry. Called from the root Update only.
 func (pl *PeerList) UpsertPeer(p discovery.Peer) tea.Cmd {
+	item := peerItem{peer: p, busy: pl.busy[p.ID]}
 	items := pl.list.Items()
 	for i, it := range items {
 		if it.(peerItem).peer.ID == p.ID {
-			return pl.list.SetItem(i, peerItem{peer: p})
+			return pl.list.SetItem(i, item)
 		}
 	}
-	return pl.list.InsertItem(len(items), peerItem{peer: p})
+	return pl.list.InsertItem(len(items), item)
+}
+
+// SetBusy marks a peer as busy (or clears the mark) and refreshes its row.
+func (pl *PeerList) SetBusy(id string, busy bool) {
+	if pl.busy == nil {
+		pl.busy = make(map[string]bool)
+	}
+	if busy {
+		pl.busy[id] = true
+	} else {
+		delete(pl.busy, id)
+	}
+	items := pl.list.Items()
+	for i, it := range items {
+		pi := it.(peerItem)
+		if pi.peer.ID == id {
+			pi.busy = busy
+			_ = pl.list.SetItem(i, pi)
+			return
+		}
+	}
+}
+
+// SetBanner sets a warning line shown under the logo (empty clears it).
+func (pl *PeerList) SetBanner(text string) {
+	pl.banner = text
+}
+
+// IsFiltering reports whether the peer list filter input is focused, so
+// global keybindings like q can pass through as filter text.
+func (pl *PeerList) IsFiltering() bool {
+	return pl.list.FilterState() == list.Filtering
 }
 
 // RemovePeer removes a peer by device ID. Called from the root Update only.
