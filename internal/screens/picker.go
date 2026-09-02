@@ -27,9 +27,13 @@ func NewPicker(width, height int) *Picker {
 	fp.CurrentDirectory = home
 	fp.AllowedTypes = nil
 	fp.ShowHidden = false
-	fp.Height = height - 6
+	_, innerH := panelInnerSize(width, height)
+	fp.Height = innerH - 3
+	if fp.Height < 3 {
+		fp.Height = 3
+	}
 
-	return &Picker{fp: fp, width: width, height: height}
+	return &Picker{fp: fp, width: width, height: height, termW: width, termH: height}
 }
 
 // FileSelected returns the last selected path, isDir flag, and whether a
@@ -58,7 +62,11 @@ func (p *Picker) Update(msg tea.Msg) (*Picker, tea.Cmd) {
 		p.height = msg.Height
 		p.termW = msg.Width
 		p.termH = msg.Height
-		p.fp.Height = msg.Height - 6
+		_, innerH := panelInnerSize(msg.Width, msg.Height)
+		p.fp.Height = innerH - 3
+		if p.fp.Height < 3 {
+			p.fp.Height = 3
+		}
 
 	case tea.KeyMsg:
 		if msg.String() == "s" {

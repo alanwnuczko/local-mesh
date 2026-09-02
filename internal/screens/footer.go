@@ -40,6 +40,12 @@ func (f *Footer) SetWidth(w int) { f.width = w }
 
 // View renders the footer for the given activity state.
 func (f *Footer) View(activity ActivityStatus) string {
+	// A line that fills the last column wraps on Unix PTYs (WSL, Linux,
+	// macOS). That extra wrap scrolls the alt screen and clips the panel's
+	// top border. Native Windows consoles do not wrap the same way, which is
+	// why this only showed up in WSL.
+	w := usableWidth(f.width)
+
 	left := fmt.Sprintf(" %s %s",
 		ui.FooterAccentStyle.Render(f.hostname),
 		ui.FooterStyle.Render("· "+f.shortID),
@@ -56,16 +62,18 @@ func (f *Footer) View(activity ActivityStatus) string {
 	}
 	right := " " + indicator + " "
 
-	// Compute visible widths (strip ANSI for width maths).
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
-	gap := f.width - leftW - rightW
+	gap := w - leftW - rightW
 	if gap < 0 {
 		gap = 0
 	}
 
-	divider := ui.FooterStyle.Render(strings.Repeat("─", f.width))
+	divider := ui.FooterStyle.Render(repeatToWidth("─", w))
 	bar := left + strings.Repeat(" ", gap) + right
+	if lipgloss.Width(bar) > w && w > 0 {
+		bar = lipgloss.NewStyle().MaxWidth(w).Inline(true).Render(bar)
+	}
 
 	return divider + "\n" + bar
 }

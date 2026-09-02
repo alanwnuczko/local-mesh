@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -26,23 +27,52 @@ func Dial(addr string) (net.Conn, error) {
 	return conn, nil
 }
 
-// setIdleDeadline extends the read deadline on c by idleTimeout from now.
-// Called once before each blocking ReadFrame so a silently-dead peer is
-// detected within idleTimeout rather than after the OS keepalive (2+ hours).
-func setIdleDeadline(c net.Conn) {
-	_ = c.SetReadDeadline(time.Now().Add(idleTimeout))
+// DialAny tries each address in order and returns the first successful
+// connection. Multi-homed peers announce several IPs; only one is typically
+// reachable from a given interface.
+func DialAny(addrs []string) (net.Conn, error) {
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("dial: no addresses")
+	}
+	var lastErr error
+	for _, addr := range addrs {
+		conn, err := Dial(addr)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
-// StartSend opens a connection to addr and starts the send goroutine
-// (goroutine #5 in the spec's inventory). It returns immediately; results
-// arrive on cfg.Progress and cfg.Done.
-func StartSend(addr string, cfg SendConfig) error {
-	conn, err := Dial(addr)
+// StartSend opens a connection to the first reachable address and starts the
+// send goroutine (goroutine #5 in the spec's inventory). It returns immediately;
+// results arrive on cfg.Progress and cfg.Done.
+func StartSend(addrs []string, cfg SendConfig) error {
+	conn, err := DialAny(addrs)
 	if err != nil {
 		return err
 	}
-	cfg.Conn = conn
+
+	parent := cfg.Ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	cfg.Ctx = ctx
+
+	if cfg.Handle != nil {
+		cfg.Handle.SetCancel(cancel)
+		if cfg.TransferID != "" {
+			cfg.Handle.SetTransferID(cfg.TransferID)
+		}
+		cfg.Conn = cfg.Handle.Wrap(conn)
+	} else {
+		cfg.Conn = conn
+	}
+
 	go func() {
+		defer cancel()
 		defer conn.Close()
 		RunSend(cfg)
 	}()

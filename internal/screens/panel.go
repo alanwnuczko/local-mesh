@@ -7,12 +7,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// panelInnerSize returns the usable width/height inside a PanelStyle box for
-// the given terminal dimensions. The panel has 1-cell border on each side and
-// 2-cell horizontal padding, so we subtract accordingly.
-func panelInnerSize(termW, termH int) (innerW, innerH int) {
-	// panelW must match the logic in wrapInPanel exactly.
-	panelW := termW - 2
+// FooterLines is the height of the status bar rendered under the main panel
+// (one divider row + one identity row). The panel must leave this many rows
+// free: if the view is taller than the terminal, the buffer scrolls and the
+// panel's top border is clipped.
+const FooterLines = 2
+
+func panelOuterSize(termW, termH int) (panelW, panelH int) {
+	panelW = termW - 2
 	if panelW > 110 {
 		panelW = 110
 	}
@@ -20,40 +22,99 @@ func panelInnerSize(termW, termH int) (innerW, innerH int) {
 		panelW = 14
 	}
 
-	// border (1 each side) + padding (2 each side) = 6 chars total subtracted from panelW
+	panelH = termH - FooterLines
+	if panelH < 8 {
+		panelH = 8
+	}
+	return
+}
+
+// panelInnerSize returns the usable width/height inside a PanelStyle box for
+// the given terminal dimensions, after reserving the footer.
+func panelInnerSize(termW, termH int) (innerW, innerH int) {
+	panelW, panelH := panelOuterSize(termW, termH)
+
+	// border (1 each side) + padding (2 each side) = 6
 	innerW = panelW - 6
 	if innerW < 8 {
 		innerW = 8
 	}
 
 	// border top/bottom (1 each) + padding top/bottom (1 each)
-	innerH = termH - 4
+	innerH = panelH - 4
 	if innerH < 4 {
 		innerH = 4
 	}
 	return
 }
 
-// wrapInPanel wraps content in a PanelStyle rounded-border box.
-// The panel width is capped at 110 for wide terminals but always respects
-// the actual terminal width - this prevents layout spill on resize.
-func wrapInPanel(content string, termW, _ int) string {
-	// 2 = 1 border char each side; keep 1 col margin so the border is visible.
-	panelW := termW - 2
-	if panelW > 110 {
-		panelW = 110
-	}
-	// M-8: unified minimum with panelInnerSize — was 10, now 14.
-	if panelW < 14 {
-		panelW = 14
-	}
-	// Width() in lipgloss specifies the width excluding borders.
-	// To make the total panel exactly panelW chars wide, we must pass panelW - 2.
+// wrapInPanel wraps content in a PanelStyle rounded-border box whose outer
+// height is exactly termH - FooterLines, so View() can append the footer
+// without overflowing the terminal (which would clip the top border).
+func wrapInPanel(content string, termW, termH int) string {
+	panelW, panelH := panelOuterSize(termW, termH)
+
+	// Width()/Height() in lipgloss exclude borders.
 	contentW := panelW - 2
+	contentH := panelH - 2
 	if contentW < 1 {
 		contentW = 1
 	}
-	return ui.PanelStyle.Width(contentW).MaxWidth(panelW).Render(content)
+	if contentH < 1 {
+		contentH = 1
+	}
+	// Truncate the payload ourselves. lipgloss MaxHeight applies to the
+	// bordered box and would clip the bottom (or, with overflow, the top)
+	// border. Height is a minimum; it pads short content.
+	textH := contentH - 2 // PanelStyle vertical padding
+	if textH < 1 {
+		textH = 1
+	}
+	content = truncateLines(content, textH)
+
+	return ui.PanelStyle.
+		Width(contentW).
+		Height(contentH).
+		Render(content)
+}
+
+func truncateLines(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[:n], "\n")
+}
+
+// usableWidth is the largest line width that will not wrap on a Unix PTY.
+// Writing exactly termW cells places the cursor in the last column; the next
+// character (or a newline after an automatic wrap) advances to a new row and
+// scrolls the alt screen.
+func usableWidth(termW int) int {
+	if termW > 1 {
+		return termW - 1
+	}
+	return termW
+}
+
+func repeatToWidth(unit string, width int) string {
+	if width <= 0 || unit == "" {
+		return ""
+	}
+	unitW := lipgloss.Width(unit)
+	if unitW <= 0 {
+		return ""
+	}
+	n := width / unitW
+	s := strings.Repeat(unit, n)
+	for lipgloss.Width(s) > width && n > 0 {
+		n--
+		s = strings.Repeat(unit, n)
+	}
+	return s
 }
 
 // renderDivider returns a horizontal rule string styled with ColorBorder.

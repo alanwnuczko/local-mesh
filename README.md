@@ -74,7 +74,7 @@ After installation, verify it works by running `local-mesh` from any directory.
 
 ### Option 3: Install via Go
 
-Go 1.22 or newer is required.
+Go 1.25 or newer is required.
 
 ```sh
 go install github.com/alanwnuczko/local-mesh/cmd/local-mesh@latest
@@ -86,7 +86,7 @@ Ensure your Go `bin` directory is in your `PATH`:
 
 ### Option 4: Build from Source
 
-Go 1.22 or newer is required.
+Go 1.25 or newer is required.
 
 ```sh
 git clone https://github.com/alanwnuczko/local-mesh.git

@@ -22,6 +22,7 @@ type Progress struct {
 	bps        float64
 	startTime  time.Time
 	lastErr    string
+	savedPath  string
 	done       bool
 	width      int
 	height     int
@@ -60,8 +61,9 @@ func (p *Progress) ApplyProgress(ev transfer.ProgressEvent) {
 }
 
 // SetDone marks the transfer complete (ok or error).
-func (p *Progress) SetDone(err error) {
+func (p *Progress) SetDone(err error, savedPath string) {
 	p.done = true
+	p.savedPath = savedPath
 	if err != nil {
 		p.phase = transfer.PhaseFailed
 		p.lastErr = err.Error()
@@ -128,6 +130,9 @@ func (p *Progress) View() string {
 	if p.done {
 		if p.phase == transfer.PhaseDone {
 			sb.WriteString("\n  " + ui.StyleSuccess.Render("Transfer complete") + "\n")
+			if p.savedPath != "" {
+				sb.WriteString(row("Saved", ui.StyleValue.Render(p.savedPath)))
+			}
 		}
 		sb.WriteString(ui.HelpStyle.Render("\n  enter / esc  return to peer list"))
 	} else {
@@ -138,3 +143,6 @@ func (p *Progress) View() string {
 
 // IsDone returns true when the transfer has completed (success or failure).
 func (p *Progress) IsDone() bool { return p.done }
+
+// SavedPath is the committed destination after a successful receive.
+func (p *Progress) SavedPath() string { return p.savedPath }

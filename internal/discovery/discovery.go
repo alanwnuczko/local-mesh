@@ -89,7 +89,7 @@ func New(deviceID, hostname string, port int) (*Service, error) {
 	)
 
 	return &Service{
-		deviceID:       deviceID,
+		deviceID:      deviceID,
 		hostname:      hostname,
 		port:          port,
 		registry:      registry,
@@ -106,6 +106,7 @@ func New(deviceID, hostname string, port int) (*Service, error) {
 // fallback beacon. Safe to call from the Bubbletea Update path: both signals
 // are non-blocking (buffered, drop-if-pending).
 func (s *Service) Refresh() {
+	InvalidateLocalNets()
 	select {
 	case s.refreshBrowse <- struct{}{}:
 	default:

@@ -4,18 +4,20 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"time"
+
+	"github.com/alanwnuczko/local-mesh/pkg/protocol"
 )
 
 // Server is the TCP listener for incoming transfers.
 // It is goroutine #3 in the spec's goroutine inventory.
 type Server struct {
-	listener  net.Listener
-	decider   OfferDecider
-	progress  chan<- ProgressEvent
-	done      chan<- DoneEvent
-	offers    chan<- OfferWithReply
+	listener net.Listener
+	progress chan<- ProgressEvent
+	done     chan<- DoneEvent
+	offers   chan<- OfferWithReply
 	// sem limits concurrent receive sessions (H-4: DoS prevention).
-	sem       chan struct{}
+	sem chan struct{}
 }
 
 const maxConcurrentReceives = 5
@@ -28,7 +30,6 @@ func NewServer(addr string, offerCh chan<- OfferWithReply, progress chan<- Progr
 	}
 	return &Server{
 		listener: l,
-		decider:  ChannelDecider(offerCh),
 		progress: progress,
 		done:     done,
 		offers:   offerCh,
@@ -58,7 +59,6 @@ func (s *Server) Serve(ctx context.Context) {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			// Check if the error is due to the listener being closed.
 			select {
 			case <-ctx.Done():
 				return
@@ -67,28 +67,38 @@ func (s *Server) Serve(ctx context.Context) {
 				return
 			}
 		}
-		// H-4: acquire semaphore slot; drop connection if at capacity.
 		select {
 		case s.sem <- struct{}{}:
 		default:
 			slog.Warn("server: max concurrent receives reached, dropping connection")
-			conn.Close()
+			go rejectBusy(conn)
 			continue
 		}
-		// Per-connection receive goroutine (spec §3.1 #4).
 		go func(c net.Conn) {
 			defer func() { <-s.sem }()
 			defer c.Close()
-			// P-2: set an initial read deadline so a peer that crashes without
-			// sending FIN is detected within idleTimeout rather than 2+ hours.
-			setIdleDeadline(c)
+
+			connCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			h := NewHandle()
+			h.SetCancel(cancel)
+			wrapped := h.Wrap(c)
+
 			RunReceive(RecvConfig{
-				Ctx:      ctx,
-				Conn:     c,
-				Decider:  s.decider,
+				Ctx:      connCtx,
+				Conn:     wrapped,
+				Handle:   h,
+				Decider:  ChannelDecider(s.offers, h),
 				Progress: s.progress,
 				Done:     s.done,
 			})
 		}(conn)
 	}
+}
+
+func rejectBusy(c net.Conn) {
+	defer c.Close()
+	_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	sendErrorFrame(c, "", protocol.ErrBusy, "server at capacity")
 }

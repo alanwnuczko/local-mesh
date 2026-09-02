@@ -50,8 +50,8 @@ type Model struct {
 	Overlay *screens.OverlayState
 
 	// Selection state carried between screens.
-	SelectedPeer discovery.Peer
-	SelectedPath string
+	SelectedPeer  discovery.Peer
+	SelectedPath  string
 	SelectedIsDir bool
 
 	// Transfer channels - created per-transfer and forwarded through the bus.
@@ -62,6 +62,18 @@ type Model struct {
 
 	// Indicates an active inbound transfer (for busy-reject logic).
 	ReceiveBusy bool
+
+	// Identity of the in-flight transfer the progress screen belongs to.
+	// Done/progress events for any other id are ignored.
+	activeTransferID string
+	activeDirection  transfer.Direction
+	xferAbort        *transfer.Handle
+
+	// Precomputed payload meta from the confirm screen, reused by startSend
+	// so a large folder is not hashed twice.
+	folderPlan      *transfer.FolderPlan
+	payloadSize     int64
+	payloadChecksum string
 
 	// OnStartSend is called when a send transfer begins so main.go can
 	// register the new channels with the bus. Set before calling p.Run().

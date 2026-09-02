@@ -84,8 +84,9 @@ func (b *Bus) ForwardOffers(ch <-chan transfer.OfferWithReply) {
 	go func() {
 		for owr := range ch {
 			b.program.Send(app.IncomingOfferMsg{
-				Offer: owr.Offer,
-				Reply: owr.Reply,
+				Offer:  owr.Offer,
+				Reply:  owr.Reply,
+				Handle: owr.Handle,
 			})
 		}
 	}()
