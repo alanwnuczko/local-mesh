@@ -203,6 +203,7 @@ func cliSend(ctx context.Context, peerKey, path string) error {
 		}
 	}()
 	if err := transfer.StartSend(peer.DialAddrs(), transfer.SendConfig{
+		Ctx:        ctx,
 		SenderID:   rt.deviceID,
 		SenderHost: rt.hostname,
 		Path:       abs,
@@ -233,7 +234,11 @@ func cliRecv(ctx context.Context, auto bool) error {
 	}
 	defer rt.close()
 	dir, _ := config.DownloadsDir()
-	fmt.Printf("listening as %s (%s) — saving to %s\n", rt.hostname, rt.deviceID[:8], dir)
+	devID := rt.deviceID
+	if len(devID) > 8 {
+		devID = devID[:8]
+	}
+	fmt.Printf("listening as %s (%s) — saving to %s\n", rt.hostname, devID, dir)
 
 	go func() {
 		for owr := range rt.offers {

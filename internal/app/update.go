@@ -164,10 +164,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.matchesActive(msg.Event.TransferID, transfer.DirSend) {
 			return m, nil
 		}
+		m.cleanupSendChans()
 		m.finishActive(msg.Event.Err, msg.Event.SavedPath)
 		return m, nil
 
 	case TransferErrorMsg:
+		m.cleanupSendChans()
 		m.finishActive(msg.Err, "")
 		return m, nil
 	}
@@ -235,6 +237,17 @@ func (m *Model) markBusy(peerID string) {
 	m.busyPeerID = peerID
 	if m.PeerList != nil && peerID != "" {
 		m.PeerList.SetBusy(peerID, true)
+	}
+}
+
+func (m *Model) cleanupSendChans() {
+	if m.SendProgress != nil {
+		close(m.SendProgress)
+		m.SendProgress = nil
+	}
+	if m.SendDone != nil {
+		close(m.SendDone)
+		m.SendDone = nil
 	}
 }
 

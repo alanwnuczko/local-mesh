@@ -150,12 +150,16 @@ func localIPv4Nets() []*net.IPNet {
 	return localNetsCached
 }
 
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
 // ShortID returns the first 8 characters of the device ID for display.
 func (p Peer) ShortID() string {
-	if len(p.ID) <= 8 {
-		return p.ID
-	}
-	return p.ID[:8]
+	return shortID(p.ID)
 }
 
 // Registry is a thread-safe map of device ID → Peer.
