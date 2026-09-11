@@ -87,7 +87,7 @@ func New(deviceID, hostname string, port int) (*Service, error) {
 	slog.Info("mDNS registered",
 		"host", hostname,
 		"port", port,
-		"id", deviceID[:8],
+		"id", shortID(deviceID),
 		"ifaces", ifaceNames(ifaces),
 	)
 
@@ -303,9 +303,9 @@ func (s *Service) sweepExpired() {
 		// the sweep scan and this removal. A concurrent handleEntry/handleFallbackPeer
 		// could have updated lastSeen after we released the lock above.
 		s.lastSeenMu.Lock()
-		_, stillExpired := s.lastSeen[id]
+		_, reAdded := s.lastSeen[id]
 		s.lastSeenMu.Unlock()
-		if stillExpired {
+		if reAdded {
 			// Peer was re-added between the two lock acquisitions; skip.
 			continue
 		}

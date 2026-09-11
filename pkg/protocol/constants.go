@@ -3,6 +3,8 @@
 // tested in isolation and potentially reused outside the TUI application.
 package protocol
 
+import "time"
+
 // ProtocolVersion is the current wire protocol version. Receivers reject
 // offers whose Version field does not match this value.
 const ProtocolVersion = 1
@@ -46,4 +48,4 @@ const (
 
 // ProgressInterval is the minimum duration between progress messages emitted
 // by transfer goroutines to avoid flooding the Bubbletea Update loop.
-const ProgressInterval = 100 // milliseconds
+const ProgressInterval = 100 * time.Millisecond

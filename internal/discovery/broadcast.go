@@ -184,5 +184,5 @@ func (s *Service) handleFallbackPeer(peer Peer) {
 	case s.events <- Event{Kind: EventPeerFound, Peer: peer}:
 	default:
 	}
-	slog.Debug("peer found via UDP broadcast", "id", peer.ID[:8], "host", peer.Hostname, "ip", peer.Addrs[0])
+	slog.Debug("peer found via UDP broadcast", "id", peer.ShortID(), "host", peer.Hostname, "addr", peer.Addr())
 }

@@ -76,7 +76,7 @@ const (
 )
 
 // progressInterval is the minimum time between consecutive progress events.
-const progressInterval = 100 * time.Millisecond
+const progressInterval = protocol.ProgressInterval
 
 // Handle is the UI-facing abort switch for an in-flight transfer.
 // Abort closes the connection (unblocking ReadFrame) after a best-effort
