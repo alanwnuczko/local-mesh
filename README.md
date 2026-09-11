@@ -26,7 +26,15 @@ It relies on mDNS and a custom UDP fallback protocol for peer discovery. Transfe
 
 ### Option 1: Pre-compiled Binaries
 
-Download the executable for your OS from the [GitHub Releases page](https://github.com/alanwnuczko/local-mesh/releases). To run the app from any terminal directory, you must add the folder containing the executable to your system's `PATH`.
+Download the executable for your OS from the [GitHub Releases page](https://github.com/alanwnuczko/local-mesh/releases), or click your platform below:
+
+| Platform | Direct Download (Latest Release) | Architecture |
+|:---|:---|:---|
+| <a href="https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Windows_x86_64.zip"><img src="https://skillicons.dev/icons?i=windows&theme=dark" alt="Windows" width="32" height="32" align="middle" /></a>&nbsp;&nbsp;**Windows** | [local-mesh_Windows_x86_64.zip](https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Windows_x86_64.zip)<br>[local-mesh_Windows_arm64.zip](https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Windows_arm64.zip) | x86_64<br>arm64 |
+| <a href="https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Linux_x86_64.tar.gz"><img src="https://skillicons.dev/icons?i=linux&theme=dark" alt="Linux" width="32" height="32" align="middle" /></a>&nbsp;&nbsp;**Linux** | [local-mesh_Linux_x86_64.tar.gz](https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Linux_x86_64.tar.gz)<br>[local-mesh_Linux_arm64.tar.gz](https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Linux_arm64.tar.gz) | x86_64<br>arm64 |
+| <a href="https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Darwin_arm64.tar.gz"><img src="https://skillicons.dev/icons?i=apple&theme=dark" alt="macOS" width="32" height="32" align="middle" /></a>&nbsp;&nbsp;**macOS** | [local-mesh_Darwin_arm64.tar.gz (Apple Silicon)](https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Darwin_arm64.tar.gz)<br>[local-mesh_Darwin_x86_64.tar.gz (Intel)](https://github.com/alanwnuczko/local-mesh/releases/latest/download/local-mesh_Darwin_x86_64.tar.gz) | Apple Silicon (arm64)<br>Intel (x86_64) |
+
+To run the app from any terminal directory, you must add the folder containing the executable to your system's `PATH`.
 
 **Windows:**
 1. Extract the executable to a permanent folder (e.g. `C:\local-mesh`).
